@@ -1,0 +1,5 @@
+loggerglue >= 1.0.2
+syslogmp
+python-libuuid
+boto3
+click
