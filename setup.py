@@ -20,12 +20,12 @@ with open('requirements.txt') as f:
 setup(
     name='kinesyslog',
     version=version['__version__'],
-    description='Syslog to AWS Kinesis Firehose gateway',
+    description='Syslog relay to Kinesis Firehose. Supports UDP, TCP, and TLS: RFC2164, RFC5424, RFC5425, RFC6587.',
     long_description=readme,
     author='Brandon Davidson',
     author_email='brad@oatmail.org',
-    url='https://github.com/brandond/aws-acl-helper',
-    download_url='https://github.com/brandond/aws-acl-helper/tarball/{}'.format(version['__version__']),
+    url='https://github.com/brandond/kinesyslog',
+    download_url='https://github.com/brandond/kinesyslog/tarball/{}'.format(version['__version__']),
     license=license,
     packages=find_packages(exclude=('docs')),
     entry_points={
