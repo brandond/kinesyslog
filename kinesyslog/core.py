@@ -24,61 +24,61 @@ from .spool import EventSpool
 @click.option(
     '--region',
     type=str,
-    help='The region to use. Overrides config/env settings'
+    help='The region to use. Overrides config/env settings.'
 )
 @click.option(
     '--spool-dir',
     type=click.Path(exists=True, file_okay=False),
-    help='Spool directory for compressed records prior to upload',
+    help='Spool directory for compressed records prior to upload.',
     default=gettempdir(),
     show_default=True
 )
 @click.option(
     '--udp-port',
     type=int,
-    help='Bind port for UDP listener; 0 to disable',
+    help='Bind port for UDP listener; 0 to disable.',
     default=0,
     show_default=True,
 )
 @click.option(
     '--tcp-port',
     type=int,
-    help='Bind port for TCP listener; 0 to disable',
+    help='Bind port for TCP listener; 0 to disable.',
     default=0,
     show_default=True,
 )
 @click.option(
     '--key',
     type=click.Path(exists=True, dir_okay=False),
-    help='Private key file for TLS listener',
+    help='Private key file for TLS listener.',
     default='localhost.key',
     show_default=True,
 )
 @click.option(
     '--cert',
     type=click.Path(exists=True, dir_okay=False),
-    help='Certificate file for TLS listener',
+    help='Certificate file for TLS listener.',
     default='localhost.crt',
     show_default=True,
 )
 @click.option(
     '--port',
     type=int,
-    help='Bind port for TLS listener; 0 to disable',
+    help='Bind port for TLS listener; 0 to disable.',
     default=6514,
     show_default=True,
 )
 @click.option(
     '--address',
     type=str,
-    help='Bind address',
+    help='Bind address.',
     default='0.0.0.0',
     show_default=True,
 )
 @click.option(
     '--stream',
     type=str,
-    help='Kinesis Firehose Delivery Stream Name',
+    help='Kinesis Firehose Delivery Stream Name'',
     required=True,
 )
 @click.command(short_help='List for incoming Syslog messages and submit to Kinesis Firehose')

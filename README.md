@@ -13,3 +13,24 @@ should have a working AWS API environment (~/.aws/credentials,
 environment variables, or EC2 IAM Role) that allows calling Kinesis Firehose's
 ``put-record-batch`` method against the account that it is running in, and the stream
 specified on the command line.
+
+Usage
+-----
+
+```
+Usage: kinesyslog listen [OPTIONS]
+
+Options:
+  --stream TEXT          Kinesis Firehose Delivery Stream Name.  [required]
+  --address TEXT         Bind address.  [default: 0.0.0.0]
+  --port INTEGER         Bind port for TLS listener; 0 to disable.  [default: 6514]
+  --cert PATH            Certificate file for TLS listener.  [default: localhost.crt]
+  --key PATH             Private key file for TLS listener.  [default: localhost.key]
+  --tcp-port INTEGER     Bind port for TCP listener; 0 to disable.  [default: 0]
+  --udp-port INTEGER     Bind port for UDP listener; 0 to disable.  [default: 0]
+  --spool-dir DIRECTORY  Spool directory for compressed records prior to upload.  [default: /tmp]
+  --region TEXT          The region to use. Overrides config/env settings.
+  --profile TEXT         Use a specific profile from your credential file.
+  --debug                Enable debug logging to STDERR.
+  --help                 Show this message and exit.
+```
