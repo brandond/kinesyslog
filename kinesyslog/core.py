@@ -1,5 +1,5 @@
 import logging
-from asyncio import get_event_loop
+from asyncio import gather, get_event_loop, CancelledError, Task
 from functools import partial
 from tempfile import gettempdir
 
@@ -9,6 +9,11 @@ import signal
 from .server import DatagramSyslogServer, SecureSyslogServer, SyslogServer
 from .sink import MessageSink
 from .spool import EventSpool
+
+
+def shutdown_exception_handler(loop, context):
+    if "exception" not in context or not isinstance(context["exception"], CancelledError):
+        loop.default_exception_handler(context)
 
 
 @click.option(
@@ -85,11 +90,17 @@ from .spool import EventSpool
 def listen(**args):
     logging.basicConfig(level='INFO', format='%(asctime)-15s [%(process)d:%(thread)d] %(levelname)s:%(name)s:%(message)s')
     loop = get_event_loop()
+    loop.set_exception_handler(shutdown_exception_handler)
+
+    for signame in ('SIGINT', 'SIGTERM'):
+        loop.add_signal_handler(getattr(signal, signame), partial(loop.stop))
 
     if args.get('debug', False):
         logging.getLogger('kinesyslog').setLevel('DEBUG')
         logging.getLogger('asyncio').setLevel('INFO')
         loop.set_debug(True)
+    else:
+        logging.getLogger('botocore').setLevel('ERROR')
 
     servers = []
     if args.get('port', 0):
@@ -99,6 +110,9 @@ def listen(**args):
     if args.get('udp_port', 0):
         servers.append(DatagramSyslogServer(host=args['address'], port=args['udp_port']))
 
+    if not servers:
+        return
+
     with EventSpool(delivery_stream=args['stream'], spool_dir=args['spool_dir']) as e:
         with MessageSink(spool=e) as m:
             try:
@@ -106,9 +120,10 @@ def listen(**args):
                     loop.run_until_complete(server.start_server(sink=m))
                 loop.run_forever()
             except KeyboardInterrupt:
-                for server in servers:
-                    server.close()
-                    loop.run_until_complete(server.wait_closed())
-                loop.stop()
+                tasks = gather(*Task.all_tasks(loop=loop), loop=loop, return_exceptions=True)
+                tasks.add_done_callback(partial(loop.stop))
+                tasks.cancel()
+                while not tasks.done() and not loop.is_closed():
+                    loop.run_forever()
             finally:
                 loop.close()

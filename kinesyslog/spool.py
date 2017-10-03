@@ -34,7 +34,7 @@ class EventSpool(object):
 
     def write(self, record):
         with NamedTemporaryFile(prefix=self.PREFIX, dir=self.spool_dir, delete=False) as temp:
-            logger.debug('Writing {0} byte record to {1}'.format(len(record), temp.name))
+            logger.info('Writing {0} byte record to {1}'.format(len(record), temp.name))
             temp.write(record)
         if time.time() - self.flushed >= FLUSH_TIME:
             self.flush()

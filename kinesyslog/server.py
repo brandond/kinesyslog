@@ -134,13 +134,6 @@ class SyslogServer(object):
         self.server = await self.loop.create_server(self._protocol_factory(sink), self.host, self.port)
         return self.server
 
-    def close(self):
-        if self.server and hasattr(self.server, 'close'):
-            return self.server.close()
-
-    async def wait_closed(self):
-        if self.server and hasattr(self.server, 'wait_closed'):
-            return await self.server.wait_closed()
 
 class SecureSyslogServer(SyslogServer):
     PROTOCOL = SecureSyslogProtocol
