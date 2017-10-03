@@ -11,7 +11,6 @@ TERMS = bytearray([0x00, 0x0A, 0x0D])
 
 class SyslogProtocol(Protocol):
     def __init__(self, sink):
-        logger.info('New {0}'.format(self.__class__.__name__))
         self.sink = sink
         self.length = 0
         self.buffer = bytearray()
@@ -24,7 +23,7 @@ class SyslogProtocol(Protocol):
         ensure_future(self._process_data(data))
 
     def error_received(self, exc):
-        logger.error('Protocol error: {0}'.format(exc))
+        self._close_with_error('Protocol error: {0}'.format(exc))
 
     async def _process_data(self, data):
         self.buffer.extend(data)
@@ -126,13 +125,22 @@ class SyslogServer(object):
         self.port = port
         self.loop = get_event_loop()
         self.args = {}
+        self.server = None
 
     def _protocol_factory(self, sink):
         return lambda: self.PROTOCOL(sink=sink, **self.args)
 
     async def start_server(self, sink):
-        return await self.loop.create_server(self._protocol_factory(sink), self.host, self.port)
+        self.server = await self.loop.create_server(self._protocol_factory(sink), self.host, self.port)
+        return self.server
 
+    def close(self):
+        if self.server and hasattr(self.server, 'close'):
+            return self.server.close()
+
+    async def wait_closed(self):
+        if self.server and hasattr(self.server, 'wait_closed'):
+            return await self.server.wait_closed()
 
 class SecureSyslogServer(SyslogServer):
     PROTOCOL = SecureSyslogProtocol
@@ -148,7 +156,8 @@ class DatagramSyslogServer(SyslogServer):
     PROTOCOL = DatagramSyslogProtocol
 
     async def start_server(self, sink):
-        return await self.loop.create_datagram_endpoint(self._protocol_factory(sink), local_addr=(self.host, self.port))
+        self.server = await self.loop.create_datagram_endpoint(self._protocol_factory(sink), local_addr=(self.host, self.port))
+        return self.server
 
 
 # https://github.com/python/cpython/pull/480

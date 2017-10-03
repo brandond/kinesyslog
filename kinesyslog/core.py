@@ -88,7 +88,7 @@ def listen(**args):
 
     if args.get('debug', False):
         logging.getLogger('kinesyslog').setLevel('DEBUG')
-        logging.getLogger('asyncio').setLevel('DEBUG')
+        logging.getLogger('asyncio').setLevel('INFO')
         loop.set_debug(True)
 
     servers = []
@@ -99,14 +99,16 @@ def listen(**args):
     if args.get('udp_port', 0):
         servers.append(DatagramSyslogServer(host=args['address'], port=args['udp_port']))
 
-    for signame in ('SIGINT', 'SIGTERM'):
-        loop.add_signal_handler(getattr(signal, signame), partial(loop.stop))
-
     with EventSpool(delivery_stream=args['stream'], spool_dir=args['spool_dir']) as e:
         with MessageSink(spool=e) as m:
             try:
                 for server in servers:
                     loop.run_until_complete(server.start_server(sink=m))
                 loop.run_forever()
+            except KeyboardInterrupt:
+                for server in servers:
+                    server.close()
+                    loop.run_until_complete(server.wait_closed())
+                loop.stop()
             finally:
                 loop.close()
