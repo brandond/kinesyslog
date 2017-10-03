@@ -18,6 +18,8 @@ TIMER_INTERVAL = 10
 
 
 class MessageSink(object):
+    __slots__ = ['spool', 'loop', 'executor', 'size', 'messages', 'flushed']
+
     def __init__(self, spool):
         self.spool = spool
         self.loop = get_event_loop()
@@ -57,7 +59,7 @@ class MessageSink(object):
         self.loop.call_later(TIMER_INTERVAL, self._flush_timer)
 
     def _flush_timer(self):
-        logger.info('flush timer: messages={0} size={1} age={2}'.format(len(self.messages), self.size, time.time() - self.flushed))
+        logger.debug('flush timer: messages={0} size={1} age={2}'.format(len(self.messages), self.size, time.time() - self.flushed))
         if self.messages and time.time() - self.flushed >= FLUSH_TIME:
             self.loop.create_task(self.flush_async())
         self._schedule_flush()
@@ -105,4 +107,5 @@ class MessageSink(object):
             with GzipFile(fileobj=bytebuf, mode='wb') as gzipbuf:
                 with TextIOWrapper(buffer=gzipbuf, encoding='utf-8') as textbuf:
                     json.dump(record, textbuf)
+                    logger.debug('Record compressed from {0} to {1} bytes'.format(textbuf.tell(), bytebuf.tell()))
             return bytebuf.getvalue()

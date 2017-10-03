@@ -16,6 +16,7 @@ lock = Lock()
 
 
 class EventSpool(object):
+    __slots__ = ['delivery_stream', 'spool_dir', 'region_name', 'profile_name', 'config', 'flushed']
     PREFIX = 'firehose_event-'
 
     def __init__(self, delivery_stream, spool_dir, region_name=None, profile_name=None):
@@ -42,9 +43,6 @@ class EventSpool(object):
     def flush(self):
         if lock.acquire(block=False):
             try:
-                session = Session(region_name=self.region_name, profile_name=self.profile_name)
-                client = session.client('firehose', config=self.config)
-
                 while True:
                     record_files = glob(os.path.join(self.spool_dir, self.PREFIX) + '*')
                     request_kwargs = {'DeliveryStreamName': self.delivery_stream, 'Records': []}
@@ -69,8 +67,10 @@ class EventSpool(object):
                             return
 
                     if request_kwargs['Records']:
-                        logger.info('Batch: {0} bytes in {1} files'.format(request_size, len(request_files)))
+                        logger.info('Batch has {0} bytes in {1} files'.format(request_size, len(request_files)))
                         try:
+                            session = Session(region_name=self.region_name, profile_name=self.profile_name)
+                            client = session.client('firehose', config=self.config)
                             response = client.put_record_batch(**request_kwargs)
                         except:
                             logger.error('Firehose put_record_batch failed', exc_info=True)

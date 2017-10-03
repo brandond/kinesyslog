@@ -40,9 +40,16 @@ Record Format
 
 When delivered to S3, the objects will contain multiple concatenated GZip-compressed records in JSON format. The records are near-identical to those created by CloudWatch Logs subscriptions. The 'owner', 'logGroup', 'logStream', and 'subscriptionFilter' fields all have bogus data, and the ID field is a GUID in stead of a numeric string. Event timestamps are floats instead of ints.
 
+Data Flow
+---------
+
+Syslog events are received via UDP, TCP, or TLS and stored in an in-memory buffer on the main listener process. When this buffer reaches a preset threshold of size (4 MB) or message age (60 seconds), the message buffer is handed off to a background worker for processing, and a new buffer allocated. 4MB has been found to frequently compress down to near 1000 KB, which is the maximum record size for Kinesis Firehose.
+
+The background worker process extracts event timestamps, assigns events a unique ID, and serializes the resulting events into a JSON document that is GZip-compressed and written to a spool file, which will comprise a single Firehose record. The buffer will be split into multiple records (along message boundaries) if its compressed size exceeds the maximum Firehose record size. Every 60 seconds, all pending records are flushed to Firehose in batches that do not exceed 4 MB or 500 records. Spooled records are removed only when Firehose acknowledges successful upload by assigning a Record ID.
+
 Todo
 ----
 
 * Client certificate validation
 * Improved handling of messages with no timestamp/hostname in header
-* Support for additional log formats (CEF, Greylog, etc)
+* Support for additional log formats (CEF, Graylog, etc)

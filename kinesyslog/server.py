@@ -1,6 +1,6 @@
 import logging
 import ssl
-from asyncio import Protocol, ensure_future, get_event_loop
+from asyncio import ensure_future, get_event_loop
 from asyncio.sslproto import SSLProtocol
 
 logger = logging.getLogger(__name__)
@@ -9,7 +9,9 @@ DIGITS = bytearray(i for i in range(0x30, 0x3A))
 TERMS = bytearray([0x00, 0x0A, 0x0D])
 
 
-class SyslogProtocol(Protocol):
+class SyslogProtocol(object):
+    __slots__ = ['sink', 'length', 'buffer', 'transport']
+
     def __init__(self, sink):
         self.sink = sink
         self.length = 0
@@ -22,8 +24,20 @@ class SyslogProtocol(Protocol):
     def data_received(self, data):
         ensure_future(self._process_data(data))
 
+    def eof_received(self):
+        pass
+
     def error_received(self, exc):
         self._close_with_error('Protocol error: {0}'.format(exc))
+
+    def connection_lost(self, exc):
+        pass
+
+    def pause_writing(self):
+        pass
+
+    def resume_writing(self):
+        pass
 
     async def _process_data(self, data):
         self.buffer.extend(data)
@@ -41,7 +55,7 @@ class SyslogProtocol(Protocol):
                 self._close_with_error('Unable to determine framing for message: {0}'.format(self.buffer))
 
             if message:
-                await self.sink.write(message)
+                await self.sink.write(bytes(message))
             else:
                 return
 
@@ -119,20 +133,20 @@ class DatagramSyslogProtocol(SyslogProtocol):
 
 class SyslogServer(object):
     PROTOCOL = SyslogProtocol
+    __slots__ = ['host', 'port', 'loop', 'args']
 
     def __init__(self, host, port):
+        logger.info('Starting {0} on {1}:{2}'.format(self.__class__.__name__, host, port))
         self.host = host
         self.port = port
         self.loop = get_event_loop()
         self.args = {}
-        self.server = None
 
     def _protocol_factory(self, sink):
         return lambda: self.PROTOCOL(sink=sink, **self.args)
 
     async def start_server(self, sink):
-        self.server = await self.loop.create_server(self._protocol_factory(sink), self.host, self.port)
-        return self.server
+        return await self.loop.create_server(self._protocol_factory(sink), self.host, self.port)
 
 
 class SecureSyslogServer(SyslogServer):
@@ -149,8 +163,7 @@ class DatagramSyslogServer(SyslogServer):
     PROTOCOL = DatagramSyslogProtocol
 
     async def start_server(self, sink):
-        self.server = await self.loop.create_datagram_endpoint(self._protocol_factory(sink), local_addr=(self.host, self.port))
-        return self.server
+        return await self.loop.create_datagram_endpoint(self._protocol_factory(sink), local_addr=(self.host, self.port))
 
 
 # https://github.com/python/cpython/pull/480
