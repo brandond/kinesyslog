@@ -6,7 +6,7 @@ from libuuid import uuid4
 
 logger = logging.getLogger(__name__)
 header = re.compile('^<\\d{1,3}>(?:(?P<rfc5424>1 )?(?P<timestamp>\\S{20,38}|... .. ..:..:..|-)) ')
-
+epoch = datetime.utcfromtimestamp(0)
 
 def create_events(messages):
     events = []
@@ -22,7 +22,7 @@ def create_event(message):
         message = message.decode()
         is_rfc5424, timestamp = get_message_header(message)
         timestamp = parse_rfc5424_timestamp(timestamp) if is_rfc5424 else parse_rfc3164_timestamp(timestamp)
-        return {'id': str(uuid4()), 'timestamp': timestamp.strftime('%Y-%m-%dT%H:%M:%S.%fZ'), 'message': message}
+        return {'id': str(uuid4()), 'timestamp': (timestamp - epoch).total_seconds(), 'message': message}
     except Exception:
         logger.error('Failed to parse message', exc_info=True)
 

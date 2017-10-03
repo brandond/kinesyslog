@@ -91,10 +91,10 @@ class MessageSink(object):
     @classmethod
     def _prepare_record(cls, events):
         return {
-            'owner': None,
-            'logGroup': None,
-            'logStream': None,
-            'subscriptionFilters': [],
+            'owner': '000000000000',
+            'logGroup': 'syslog',
+            'logStream': 'syslog',
+            'subscriptionFilters': ['syslog'],
             'messageType': 'DATA_MESSAGE',
             'logEvents': events,
         }

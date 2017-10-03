@@ -34,3 +34,15 @@ Options:
   --debug                Enable debug logging to STDERR.
   --help                 Show this message and exit.
 ```
+
+Record Format
+-------------
+
+When delivered to S3, the objects will contain multiple concatenated GZip-compressed records in JSON format. The records are near-identical to those created by CloudWatch Logs subscriptions. The 'owner', 'logGroup', 'logStream', and 'subscriptionFilter' fields all have bogus data, and the ID field is a GUID in stead of a numeric string. Event timestamps are floats instead of ints.
+
+Todo
+----
+
+* Client certificate validation
+* Improved handling of messages with no timestamp/hostname in header
+* Support for additional log formats (CEF, Greylog, etc)
