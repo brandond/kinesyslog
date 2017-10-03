@@ -14,4 +14,4 @@ environment variables, or EC2 IAM Role) that allows calling Kinesis Firehose's
 ``put-record-batch`` method against the account that it is running in, and the stream
 specified on the command line.
 
-Consult `README.md on GitHub <https://github.com/brandond/kinesyslog/blob/master/README.md>` for usage instructions.
+Consult `README.md on GitHub <https://github.com/brandond/kinesyslog/blob/master/README.md>`__ for usage instructions.
