@@ -49,14 +49,14 @@ from .spool import EventSpool
 )
 @click.option(
     '--key',
-    type=click.Path(exists=True, dir_okay=False),
+    type=click.Path(dir_okay=False),
     help='Private key file for TLS listener.',
     default='localhost.key',
     show_default=True,
 )
 @click.option(
     '--cert',
-    type=click.Path(exists=True, dir_okay=False),
+    type=click.Path(dir_okay=False),
     help='Certificate file for TLS listener.',
     default='localhost.crt',
     show_default=True,
