@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 header = re.compile('^<\\d{1,3}>(?:(?P<rfc5424>1 )?(?P<timestamp>\\S{20,38}|... .. ..:..:..|-)) ')
 epoch = datetime.utcfromtimestamp(0)
 
+
 def create_events(messages):
     events = []
     for message in messages:

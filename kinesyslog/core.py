@@ -78,7 +78,7 @@ from .spool import EventSpool
 @click.option(
     '--stream',
     type=str,
-    help='Kinesis Firehose Delivery Stream Name'',
+    help='Kinesis Firehose Delivery Stream Name.',
     required=True,
 )
 @click.command(short_help='List for incoming Syslog messages and submit to Kinesis Firehose')
