@@ -4,9 +4,11 @@ from asyncio import ensure_future, get_event_loop
 from asyncio.sslproto import SSLProtocol
 
 logger = logging.getLogger(__name__)
+
 LESSTHAN = 0x3C
 DIGITS = bytearray(i for i in range(0x30, 0x3A))
 TERMS = bytearray([0x00, 0x0A, 0x0D])
+MAX_MESSAGE_LENGTH = 1024 * 16
 
 
 class SyslogProtocol(object):
@@ -79,10 +81,12 @@ class SyslogProtocol(object):
             length, sep, remainder = self.buffer.partition(b' ')
             if sep:
                 try:
-                    self.length = int(length)
                     self.buffer = remainder
+                    self.length = int(length)
+                    if self.length < 0 or self.length > MAX_MESSAGE_LENGTH:
+                        raise ValueError
                 except ValueError:
-                    self._close_with_error('Unable to parse {0} as integer MSG-LEN for octet-counted message'.format(length))
+                    self._close_with_error('Invalid MSG-LEN {0} for octet-counted message'.format(length))
                     return
             else:
                 return
@@ -103,6 +107,8 @@ class SyslogProtocol(object):
         for separator in TERMS:
             message, sep, remainder = self.buffer.partition(bytes([separator]))
             if sep:
+                if len(message) > MAX_MESSAGE_LENGTH:
+                    message = message[:MAX_MESSAGE_LENGTH]
                 self.buffer = remainder
                 return message
 

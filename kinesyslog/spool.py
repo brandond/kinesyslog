@@ -51,7 +51,7 @@ class EventSpool(object):
 
                     for path in record_files:
                         file_size = os.path.getsize(path)
-                        if request_size + file_size <= MAX_REQUEST_SIZE and len(request_files) <= MAX_RECORD_COUNT:
+                        if request_size + file_size <= MAX_REQUEST_SIZE and len(request_files) < MAX_RECORD_COUNT:
                             logger.debug('Including {0} ({1} bytes) in batch'.format(path, file_size))
                             request_size += file_size
                             request_files.append(path)
