@@ -1,5 +1,6 @@
-KINESYSLOG
+kinesyslog
 ==========
+[![PyPI version](https://badge.fury.io/py/kinesyslog.svg)](https://badge.fury.io/py/kinesyslog)
 
 Syslog relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS: RFC2164, RFC5424, RFC5425, RFC6587.
 
