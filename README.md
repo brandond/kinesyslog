@@ -2,7 +2,7 @@ kinesyslog
 ==========
 [![PyPI version](https://badge.fury.io/py/kinesyslog.svg)](https://badge.fury.io/py/kinesyslog)
 
-Syslog relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS: RFC2164, RFC5424, RFC5425, RFC6587.
+Syslog and GELF relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS; RFC2164, RFC5424, RFC5425, RFC6587, GELF v1.1.
 
 Prerequisites
 -------------
@@ -32,6 +32,7 @@ Options:
   --spool-dir DIRECTORY  Spool directory for compressed records prior to upload.  [default: /tmp]
   --region TEXT          The region to use. Overrides config/env settings.
   --profile TEXT         Use a specific profile from your credential file.
+  --gelf                 Listen for messages in Graylog Extended Log Format (GELF) instead of Syslog.
   --debug                Enable debug logging to STDERR.
   --help                 Show this message and exit.
 ```
@@ -39,7 +40,7 @@ Options:
 Record Format
 -------------
 
-When delivered to S3, the objects will contain multiple concatenated GZip-compressed records in JSON format. The records are near-identical to those created by CloudWatch Logs subscriptions. The 'owner', 'logGroup', 'logStream', and 'subscriptionFilter' fields all have bogus data, and the ID field is a GUID in stead of a numeric string. Event timestamps are floats instead of ints.
+When delivered to S3, the objects will contain multiple concatenated GZip-compressed records in JSON format. The records are near-identical to those created by CloudWatch Logs subscriptions. The 'logGroup', 'logStream', and 'subscriptionFilter' fields are set to the message type (syslog or gelf), and the ID field is a GUID instead of a numeric string. Event timestamps are floats instead of ints.
 
 Data Flow
 ---------
@@ -52,5 +53,3 @@ Todo
 ----
 
 * Client certificate validation
-* Improved handling of messages with no timestamp/hostname in header
-* Support for additional log formats (CEF, Graylog, etc)

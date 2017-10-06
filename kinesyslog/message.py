@@ -4,6 +4,10 @@ from datetime import datetime, timedelta
 
 from libuuid import uuid4
 
+import ujson as json
+
+from . import constant
+
 logger = logging.getLogger(__name__)
 header = re.compile('^<\\d{1,3}>(?:(?P<rfc5424>1 )?(?P<timestamp>\\S{20,38}|... .. ..:..:..|-)) ')
 epoch = datetime.utcfromtimestamp(0)
@@ -20,10 +24,18 @@ def create_events(messages):
 
 def create_event(message):
     try:
+        start = message[0]
         message = message.decode()
-        is_rfc5424, timestamp = get_message_header(message)
-        timestamp = parse_rfc5424_timestamp(timestamp) if is_rfc5424 else parse_rfc3164_timestamp(timestamp)
-        return {'id': str(uuid4()), 'timestamp': (timestamp - epoch).total_seconds(), 'message': message}
+        if start == constant.LESSTHAN:
+            is_rfc5424, timestamp = get_message_header(message)
+            timestamp = parse_rfc5424_timestamp(timestamp) if is_rfc5424 else parse_rfc3164_timestamp(timestamp)
+            timestamp = (timestamp - epoch).total_seconds()
+        elif start == constant.OPENBRACKET:
+            timestamp = json.loads(message).get('timestamp', datetime.now())
+        else:
+            raise ValueError('Unable to extract timestamp')
+
+        return {'id': str(uuid4()), 'timestamp': timestamp, 'message': message}
     except Exception:
         logger.error('Failed to parse message', exc_info=True)
 

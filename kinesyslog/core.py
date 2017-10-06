@@ -1,12 +1,13 @@
 import logging
-from asyncio import gather, get_event_loop, CancelledError, Task
+import signal
+from asyncio import CancelledError, Task, gather, get_event_loop
 from functools import partial
 from tempfile import gettempdir
 
 import click
-import signal
 
-from .server import DatagramSyslogServer, SecureSyslogServer, SyslogServer
+from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
+                     SecureGelfServer, SecureSyslogServer, SyslogServer)
 from .sink import MessageSink
 from .spool import EventSpool
 
@@ -20,6 +21,11 @@ def shutdown_exception_handler(loop, context):
     '--debug',
     is_flag=True,
     help='Enable debug logging to STDERR.'
+)
+@click.option(
+    '--gelf',
+    is_flag=True,
+    help='Listen for messages in Graylog Extended Log Format (GELF) instead of Syslog.'
 )
 @click.option(
     '--profile',
@@ -88,9 +94,20 @@ def shutdown_exception_handler(loop, context):
 )
 @click.command(short_help='List for incoming Syslog messages and submit to Kinesis Firehose')
 def listen(**args):
-    logging.basicConfig(level='INFO', format='%(asctime)-15s [%(process)d:%(thread)d] %(levelname)s:%(name)s:%(message)s')
+    logging.basicConfig(level='INFO', format='%(asctime)-15s %(levelname)s:%(name)s %(message)s')
     loop = get_event_loop()
     loop.set_exception_handler(shutdown_exception_handler)
+
+    if args.get('gelf', False):
+        message_type = 'gelf'
+        TLS = SecureGelfServer
+        TCP = GelfServer
+        UDP = DatagramGelfServer
+    else:
+        message_type = 'syslog'
+        TLS = SecureSyslogServer
+        TCP = SyslogServer
+        UDP = DatagramSyslogServer
 
     if args.get('debug', False):
         logging.getLogger('kinesyslog').setLevel('DEBUG')
@@ -102,11 +119,11 @@ def listen(**args):
     servers = []
     try:
         if args.get('port', 0):
-            servers.append(SecureSyslogServer(host=args['address'], port=args['port'], certfile=args['cert'], keyfile=args['key']))
+            servers.append(TLS(host=args['address'], port=args['port'], certfile=args['cert'], keyfile=args['key']))
         if args.get('tcp_port', 0):
-            servers.append(SyslogServer(host=args['address'], port=args['tcp_port']))
+            servers.append(TCP(host=args['address'], port=args['tcp_port']))
         if args.get('udp_port', 0):
-            servers.append(DatagramSyslogServer(host=args['address'], port=args['udp_port']))
+            servers.append(UDP(host=args['address'], port=args['udp_port']))
     except:
         logging.error('Failed to start server', exc_info=True)
 
@@ -116,11 +133,11 @@ def listen(**args):
     for signame in ('SIGINT', 'SIGTERM'):
         loop.add_signal_handler(getattr(signal, signame), partial(loop.stop))
 
-    with EventSpool(delivery_stream=args['stream'], spool_dir=args['spool_dir']) as e:
-        with MessageSink(spool=e) as m:
+    with EventSpool(delivery_stream=args['stream'], spool_dir=args['spool_dir']) as spool:
+        with MessageSink(spool=spool, message_type=message_type) as sink:
             try:
                 for server in servers:
-                    loop.run_until_complete(server.start_server(sink=m))
+                    loop.run_until_complete(server.start_server(sink=sink))
                 loop.run_forever()
             except KeyboardInterrupt:
                 tasks = gather(*Task.all_tasks(loop=loop), loop=loop, return_exceptions=True)
