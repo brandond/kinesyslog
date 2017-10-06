@@ -1,7 +1,7 @@
 kinesyslog
 ==========
 
-Syslog relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS: RFC2164, RFC5424, RFC5425, RFC6587.
+Syslog and GELF relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS; RFC2164, RFC5424, RFC5425, RFC6587, GELF v1.1.
 
 Prerequisites
 -------------

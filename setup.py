@@ -17,7 +17,7 @@ with open('requirements.txt') as f:
 setup(
     name='kinesyslog',
     version=version['__version__'],
-    description='Syslog relay to Kinesis Firehose. Supports UDP, TCP, and TLS: RFC2164, RFC5424, RFC5425, RFC6587.',
+    description='Syslog and GELF relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS; RFC2164, RFC5424, RFC5425, RFC6587, GELF v1.1.',
     long_description=readme,
     author='Brandon Davidson',
     author_email='brad@oatmail.org',
