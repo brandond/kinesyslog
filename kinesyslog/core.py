@@ -92,9 +92,6 @@ def listen(**args):
     loop = get_event_loop()
     loop.set_exception_handler(shutdown_exception_handler)
 
-    for signame in ('SIGINT', 'SIGTERM'):
-        loop.add_signal_handler(getattr(signal, signame), partial(loop.stop))
-
     if args.get('debug', False):
         logging.getLogger('kinesyslog').setLevel('DEBUG')
         logging.getLogger('asyncio').setLevel('INFO')
@@ -103,15 +100,21 @@ def listen(**args):
         logging.getLogger('botocore').setLevel('ERROR')
 
     servers = []
-    if args.get('port', 0):
-        servers.append(SecureSyslogServer(host=args['address'], port=args['port'], certfile=args['cert'], keyfile=args['key']))
-    if args.get('tcp_port', 0):
-        servers.append(SyslogServer(host=args['address'], port=args['tcp_port']))
-    if args.get('udp_port', 0):
-        servers.append(DatagramSyslogServer(host=args['address'], port=args['udp_port']))
+    try:
+        if args.get('port', 0):
+            servers.append(SecureSyslogServer(host=args['address'], port=args['port'], certfile=args['cert'], keyfile=args['key']))
+        if args.get('tcp_port', 0):
+            servers.append(SyslogServer(host=args['address'], port=args['tcp_port']))
+        if args.get('udp_port', 0):
+            servers.append(DatagramSyslogServer(host=args['address'], port=args['udp_port']))
+    except:
+        logging.error('Failed to start server', exc_info=True)
 
     if not servers:
         return
+
+    for signame in ('SIGINT', 'SIGTERM'):
+        loop.add_signal_handler(getattr(signal, signame), partial(loop.stop))
 
     with EventSpool(delivery_stream=args['stream'], spool_dir=args['spool_dir']) as e:
         with MessageSink(spool=e) as m:

@@ -5,10 +5,11 @@ from asyncio.sslproto import SSLProtocol
 
 logger = logging.getLogger(__name__)
 
-LESSTHAN = 0x3C
-DIGITS = bytearray(i for i in range(0x30, 0x3A))
-TERMS = bytearray([0x00, 0x0A, 0x0D])
-MAX_MESSAGE_LENGTH = 1024 * 16
+LESSTHAN = 0x3C # First char of non-octet-counted messages
+DIGITS = bytearray(i for i in range(0x30, 0x3A)) # First char of octet-counted message
+TERMS = bytearray([0x00, 0x0A, 0x0D]) # Framed message terminators
+METHODS = bytearray([0x47, 0x48]) # First char of common HTTP methods
+MAX_MESSAGE_LENGTH = 1024 * 16 # Maximum supported message length
 
 
 class SyslogProtocol(object):
@@ -42,8 +43,10 @@ class SyslogProtocol(object):
         pass
 
     async def _process_data(self, data):
-        self.buffer.extend(data)
+        if self.transport and self.transport.is_closing():
+            return
 
+        self.buffer.extend(data)
         while self.buffer:
             message = None
 
@@ -53,6 +56,8 @@ class SyslogProtocol(object):
                 del self.buffer[0]
             elif self.buffer[0] == LESSTHAN:
                 message = self._get_non_transparent_framed_message()
+            elif self.buffer[0] in METHODS:
+                self._close_with_http()
             else:
                 self._close_with_error('Unable to determine framing for message: {0}'.format(self.buffer))
 
@@ -64,10 +69,18 @@ class SyslogProtocol(object):
     def _close_with_error(self, message=None):
         if message:
             logger.error(message)
-        if self.transport:
-            self.transport.close()
         if self.buffer:
             self.buffer.clear()
+        if self.transport:
+            self.transport.close()
+
+    def _close_with_http(self):
+        if self.buffer:
+            self.buffer.clear()
+        if self.transport:
+            logger.debug('Sending HTTP response and closing connection')
+            self.transport.write(b'HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n')
+            self.transport.close()
 
     def _get_octet_counted_message(self):
         """
@@ -114,14 +127,12 @@ class SyslogProtocol(object):
 
 
 class SecureSyslogProtocol(SSLProtocol):
-    def __init__(self, certfile, keyfile, password=None, *args, **kwargs):
+    def __init__(self, sslcontext, *args, **kwargs):
         loop = get_event_loop()
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
-        ctx.load_cert_chain(certfile, keyfile, password)
         super(SecureSyslogProtocol, self).__init__(
             loop=loop,
             app_protocol=SyslogProtocol(*args, **kwargs),
-            sslcontext=ctx,
+            sslcontext=sslcontext,
             waiter=None,
             server_side=True
         )
@@ -160,9 +171,10 @@ class SecureSyslogServer(SyslogServer):
 
     def __init__(self, certfile, keyfile, password=None, *args, **kwargs):
         super(SecureSyslogServer, self).__init__(*args, **kwargs)
-        self.args['certfile'] = certfile
-        self.args['keyfile'] = keyfile
-        self.args['password'] = password
+        logger.info('{0} using cert from {1} and key from {2}'.format(self.__class__.__name__, certfile, keyfile))
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
+        ctx.load_cert_chain(certfile, keyfile, password)
+        self.args['sslcontext'] = ctx
 
 
 class DatagramSyslogServer(SyslogServer):
