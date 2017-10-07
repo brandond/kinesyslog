@@ -34,7 +34,7 @@ class SecureSyslogServer(SyslogServer):
     def __init__(self, certfile, keyfile, password=None, *args, **kwargs):
         super(SecureSyslogServer, self).__init__(*args, **kwargs)
         logger.info('{0} using cert from {1} and key from {2}'.format(self.__class__.__name__, certfile, keyfile))
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
         ctx.load_cert_chain(certfile, keyfile, password)
         self.args['sslcontext'] = ctx
 
