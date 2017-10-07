@@ -77,7 +77,7 @@ class SyslogProtocol(object):
             self.buffer.clear()
         if self.transport:
             logger.debug('Sending HTTP response and closing connection')
-            self.transport.write(b'HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n')
+            self.transport.write(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
             self.transport.close()
 
     def _get_octet_counted_message(self):
