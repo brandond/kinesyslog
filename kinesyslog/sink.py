@@ -23,6 +23,7 @@ class MessageSink(object):
         self.message_type = message_type
         self.loop = get_event_loop()
         self.executor = ProcessPoolExecutor()
+        self.executor._start_queue_management_thread()
         self._schedule_flush()
         self.clear()
         self.account = '000000000000'
