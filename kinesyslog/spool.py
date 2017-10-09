@@ -8,6 +8,8 @@ from tempfile import NamedTemporaryFile
 from boto3 import Session
 from botocore.config import Config
 
+from .util import get_region
+
 FLUSH_TIME = 60
 MAX_REQUEST_SIZE = 1024 * 1024 * 4
 MAX_RECORD_COUNT = 500
@@ -16,15 +18,14 @@ lock = Lock()
 
 
 class EventSpool(object):
-    __slots__ = ['delivery_stream', 'spool_dir', 'region_name', 'profile_name', 'config', 'flushed']
+    __slots__ = ['delivery_stream', 'spool_dir', 'profile_name', 'config', 'flushed']
     PREFIX = 'firehose_event-'
 
     def __init__(self, delivery_stream, spool_dir, region_name=None, profile_name=None):
         self.delivery_stream = delivery_stream
         self.spool_dir = spool_dir
-        self.region_name = region_name
         self.profile_name = profile_name
-        self.config = Config(retries={'max_attempts': 10})
+        self.config = Config(retries={'max_attempts': 10}, region_name=get_region(region_name, profile_name))
         self.flushed = 0
 
     def __enter__(self):
@@ -69,7 +70,7 @@ class EventSpool(object):
                     if request_kwargs['Records']:
                         logger.info('Batch has {0} bytes in {1} files'.format(request_size, len(request_files)))
                         try:
-                            session = Session(region_name=self.region_name, profile_name=self.profile_name)
+                            session = Session(profile_name=self.profile_name)
                             client = session.client('firehose', config=self.config)
                             response = client.put_record_batch(**request_kwargs)
                         except:

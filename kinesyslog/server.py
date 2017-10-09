@@ -2,9 +2,8 @@ import logging
 import ssl
 from asyncio import get_event_loop
 
-from .protocol import (DatagramGelfProtocol,
-                       DatagramSyslogProtocol, GelfProtocol,
-                       SecureGelfProtocol, SecureSyslogProtocol,
+from .protocol import (DatagramGelfProtocol, DatagramSyslogProtocol,
+                       GelfProtocol, SecureGelfProtocol, SecureSyslogProtocol,
                        SyslogProtocol)
 
 logger = logging.getLogger(__name__)

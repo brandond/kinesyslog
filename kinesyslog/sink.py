@@ -4,6 +4,7 @@ import time
 from asyncio import get_event_loop
 from concurrent.futures import ProcessPoolExecutor
 from gzip import compress
+
 from boto3 import Session
 
 import ujson as json
@@ -26,7 +27,7 @@ class MessageSink(object):
         self.clear()
         self.account = '000000000000'
         try:
-            session = Session(region_name=spool.region_name, profile_name=spool.profile_name)
+            session = Session(profile_name=spool.profile_name)
             client = session.client('sts', config=spool.config)
             self.account = client.get_caller_identity()['Account']
         except:
