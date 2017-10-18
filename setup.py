@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
+from os import chdir
+from os.path import abspath, dirname
 
-import sys
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
+
+chdir(dirname(abspath(__file__)))
 
 version = {}
 
