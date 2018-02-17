@@ -10,6 +10,7 @@ from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
                      SecureGelfServer, SecureSyslogServer, SyslogServer)
 from .sink import MessageSink
 from .spool import EventSpool
+from . import proxy
 
 
 def shutdown_exception_handler(loop, context):
@@ -20,29 +21,34 @@ def shutdown_exception_handler(loop, context):
 @click.option(
     '--debug',
     is_flag=True,
-    help='Enable debug logging to STDERR.'
+    help='Enable debug logging to STDERR.',
 )
 @click.option(
     '--gelf',
     is_flag=True,
-    help='Listen for messages in Graylog Extended Log Format (GELF) instead of Syslog.'
+    help='Listen for messages in Graylog Extended Log Format (GELF) instead of Syslog.',
 )
 @click.option(
     '--profile',
     type=str,
-    help='Use a specific profile from your credential file.'
+    help='Use a specific profile from your credential file.',
 )
 @click.option(
     '--region',
     type=str,
-    help='The region to use. Overrides config/env settings.'
+    help='The region to use. Overrides config/env settings.',
 )
 @click.option(
     '--spool-dir',
-    type=click.Path(exists=True, file_okay=False),
+    type=click.Path(exists=True, writable=True, file_okay=False, resolve_path=True),
     help='Spool directory for compressed records prior to upload.',
     default=gettempdir(),
-    show_default=True
+    show_default=True,
+)
+@click.option(
+    '--proxy-protocol',
+    is_flag=True,
+    help='Enable Proxy Protocol v1/v2 support for TCP and TLS listeners.',
 )
 @click.option(
     '--udp-port',
@@ -50,6 +56,7 @@ def shutdown_exception_handler(loop, context):
     help='Bind port for UDP listener; 0 to disable.',
     default=0,
     show_default=True,
+    multiple=True,
 )
 @click.option(
     '--tcp-port',
@@ -57,17 +64,18 @@ def shutdown_exception_handler(loop, context):
     help='Bind port for TCP listener; 0 to disable.',
     default=0,
     show_default=True,
+    multiple=True,
 )
 @click.option(
     '--key',
-    type=click.Path(dir_okay=False),
+    type=click.Path(exists=True, readable=True, dir_okay=False, resolve_path=True),
     help='Private key file for TLS listener.',
     default='localhost.key',
     show_default=True,
 )
 @click.option(
     '--cert',
-    type=click.Path(dir_okay=False),
+    type=click.Path(exists=True, readable=True, dir_okay=False, resolve_path=True),
     help='Certificate file for TLS listener.',
     default='localhost.crt',
     show_default=True,
@@ -78,6 +86,7 @@ def shutdown_exception_handler(loop, context):
     help='Bind port for TLS listener; 0 to disable.',
     default=6514,
     show_default=True,
+    multiple=True,
 )
 @click.option(
     '--address',
@@ -109,6 +118,10 @@ def listen(**args):
         TCP = SyslogServer
         UDP = DatagramSyslogServer
 
+    if args.get('proxy_protocol', False):
+        TLS = proxy.wrap(TLS)
+        TCP = proxy.wrap(TCP)
+
     if args.get('debug', False):
         logging.getLogger('kinesyslog').setLevel('DEBUG')
         logging.getLogger('asyncio').setLevel('INFO')
@@ -118,12 +131,15 @@ def listen(**args):
 
     servers = []
     try:
-        if args.get('port', 0):
-            servers.append(TLS(host=args['address'], port=args['port'], certfile=args['cert'], keyfile=args['key']))
-        if args.get('tcp_port', 0):
-            servers.append(TCP(host=args['address'], port=args['tcp_port']))
-        if args.get('udp_port', 0):
-            servers.append(UDP(host=args['address'], port=args['udp_port']))
+        if args.get('port', None):
+            for port in args['port']:
+                servers.append(TLS(host=args['address'], port=port, certfile=args['cert'], keyfile=args['key']))
+        if args.get('tcp_port', None):
+            for port in args['tcp_port']:
+                servers.append(TCP(host=args['address'], port=port))
+        if args.get('udp_port', None):
+            for port in args['udp_port']:
+                servers.append(UDP(host=args['address'], port=port))
     except:
         logging.error('Failed to start server', exc_info=True)
 
@@ -133,17 +149,17 @@ def listen(**args):
     for signame in ('SIGINT', 'SIGTERM'):
         loop.add_signal_handler(getattr(signal, signame), partial(loop.stop))
 
-    with EventSpool(delivery_stream=args['stream'], spool_dir=args['spool_dir']) as spool:
-        with MessageSink(spool=spool, message_type=message_type) as sink:
-            try:
+    try:
+        with EventSpool(delivery_stream=args['stream'], spool_dir=args['spool_dir']) as spool:
+            with MessageSink(spool=spool, message_type=message_type) as sink:
                 for server in servers:
                     loop.run_until_complete(server.start_server(sink=sink))
                 loop.run_forever()
-            except KeyboardInterrupt:
-                tasks = gather(*Task.all_tasks(loop=loop), loop=loop, return_exceptions=True)
-                tasks.add_done_callback(partial(loop.stop))
-                tasks.cancel()
-                while not tasks.done() and not loop.is_closed():
-                    loop.run_forever()
-            finally:
-                loop.close()
+    except KeyboardInterrupt:
+        tasks = gather(*Task.all_tasks(loop=loop), loop=loop, return_exceptions=True)
+        tasks.add_done_callback(partial(loop.stop))
+        tasks.cancel()
+        while not tasks.done() and not loop.is_closed():
+            loop.run_forever()
+    finally:
+        loop.close()

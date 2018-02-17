@@ -10,20 +10,37 @@ from .gelf import ChunkedMessage
 logger = logging.getLogger(__name__)
 
 
-class SyslogProtocol(object):
-    __slots__ = ['sink', 'length', 'buffer', 'transport']
+class DefaultProtocol(object):
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError
+
+
+class BaseLoggingProtocol(object):
+    __slots__ = ['_sink', '_length', '_buffer', '_transport']
+    PROTOCOL = DefaultProtocol
 
     def __init__(self, sink):
-        self.sink = sink
-        self.length = 0
-        self.buffer = bytearray()
-        self.transport = None
+        self._sink = sink
+        self._length = 0
+        self._buffer = bytearray()
+        self._transport = None
 
     def connection_made(self, transport):
-        self.transport = transport
+        if hasattr(transport, 'sendto'):
+            return
+
+        logger.debug('Got connection from {} to {} using {}'.format(
+            transport.get_extra_info('peername'),
+            transport.get_extra_info('sockname'),
+            transport.__class__.__name__))
+        self._transport = transport
 
     def data_received(self, data):
         ensure_future(self._process_data(data))
+
+    def datagram_received(self, data, addr):
+        # Append terminator to simplify parsing
+        self.data_received(data + b'\x00')
 
     def eof_received(self):
         pass
@@ -40,45 +57,62 @@ class SyslogProtocol(object):
     def resume_writing(self):
         pass
 
-    async def _process_data(self, data):
-        if self.transport and self.transport.is_closing():
-            return
-
-        self.buffer.extend(data)
-        while self.buffer:
-            message = None
-
-            if self.length or self.buffer[0] in constant.DIGITS:
-                message = self._get_octet_counted_message()
-            elif self.buffer[0] in constant.TERMS:
-                del self.buffer[0]
-            elif self.buffer[0] == constant.LESSTHAN:
-                message = self._get_non_transparent_framed_message()
-            elif self.buffer[0] in constant.METHODS:
-                self._close_with_http()
-            else:
-                self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self.buffer))
-
-            if message:
-                await self.sink.write(bytes(message))
-            else:
-                return
-
     def _close_with_error(self, message=None):
         if message:
             logger.error(message)
-        if self.buffer:
-            self.buffer.clear()
-        if self.transport:
-            self.transport.close()
+        if self._buffer:
+            self._buffer.clear()
+        if self._transport:
+            self._transport.close()
 
     def _close_with_http(self):
-        if self.buffer:
-            self.buffer.clear()
-        if self.transport:
+        if self._buffer:
+            self._buffer.clear()
+        if self._transport:
             logger.debug('Sending HTTP response and closing connection')
-            self.transport.write(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
-            self.transport.close()
+            self._transport.write(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+            self._transport.close()
+
+    async def _process_data(self, data):
+        raise NotImplementedError
+
+
+class BaseSecureLoggingProtocol(SSLProtocol):
+    def __init__(self, sslcontext, *args, **kwargs):
+        loop = get_event_loop()
+        super(BaseSecureLoggingProtocol, self).__init__(
+            loop=loop,
+            app_protocol=self.PROTOCOL(*args, **kwargs),
+            sslcontext=sslcontext,
+            waiter=None,
+            server_side=True
+        )
+
+
+class SyslogProtocol(BaseLoggingProtocol):
+    async def _process_data(self, data):
+        if self._transport and self._transport.is_closing():
+            return
+
+        self._buffer.extend(data)
+        while self._buffer:
+            message = None
+
+            if self._length or self._buffer[0] in constant.DIGITS:
+                message = self._get_octet_counted_message()
+            elif self._buffer[0] in constant.TERMS:
+                del self._buffer[0]
+            elif self._buffer[0] == constant.LESSTHAN:
+                message = self._get_non_transparent_framed_message()
+            elif self._buffer[0] in constant.METHODS:
+                self._close_with_http()
+            else:
+                self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self._buffer))
+
+            if message:
+                await self._sink.write(bytes(message))
+            else:
+                return
 
     def _get_octet_counted_message(self):
         """
@@ -88,13 +122,13 @@ class SyslogProtocol(object):
         https://tools.ietf.org/html/rfc6587#section-3.4.1
         https://tools.ietf.org/html/rfc5425#section-4.3.1
         """
-        if not self.length:
-            length, sep, remainder = self.buffer.partition(b' ')
+        if not self._length:
+            length, sep, remainder = self._buffer.partition(b' ')
             if sep:
                 try:
-                    self.buffer = remainder
-                    self.length = int(length)
-                    if self.length < 0 or self.length > constant.MAX_MESSAGE_LENGTH:
+                    self._buffer = remainder
+                    self._length = int(length)
+                    if self._length < 0 or self._length > constant.MAX_MESSAGE_LENGTH:
                         raise ValueError
                 except ValueError:
                     self._close_with_error('Invalid MSG-LEN {0} for octet-counted message'.format(length))
@@ -102,10 +136,10 @@ class SyslogProtocol(object):
             else:
                 return
 
-        if len(self.buffer) >= self.length:
-            message = self.buffer[:self.length]
-            del self.buffer[:self.length]
-            self.length = 0
+        if len(self._buffer) >= self._length:
+            message = self._buffer[:self._length]
+            del self._buffer[:self._length]
+            self._length = 0
             return message
         else:
             return
@@ -116,92 +150,76 @@ class SyslogProtocol(object):
         https://tools.ietf.org/html/rfc6587#section-3.4.2
         """
         for separator in constant.TERMS:
-            message, sep, remainder = self.buffer.partition(bytes([separator]))
+            message, sep, remainder = self._buffer.partition(bytes([separator]))
             if sep:
                 if len(message) > constant.MAX_MESSAGE_LENGTH:
                     message = message[:constant.MAX_MESSAGE_LENGTH]
-                self.buffer = remainder
+                self._buffer = remainder
                 return message
 
 
-class GelfProtocol(SyslogProtocol):
+class GelfProtocol(BaseLoggingProtocol):
     async def _process_data(self, data):
-        if self.transport and self.transport.is_closing():
+        if self._transport and self._transport.is_closing():
             return
 
-        self.buffer.extend(data)
-        while self.buffer:
+        self._buffer.extend(data)
+        while self._buffer:
             message = None
 
-            if self.buffer[0] == constant.OPENBRACKET:
+            if self._buffer[0] == constant.OPENBRACKET:
                 message = self._get_non_transparent_framed_message()
-            elif self.buffer[0:1] == constant.ZLIB_MAGIC:
+            elif self._buffer[0:1] == constant.ZLIB_MAGIC:
                 message = self._get_zlib_message()
-            elif self.buffer[0:2] == constant.GZIP_MAGIC:
+            elif self._buffer[0:2] == constant.GZIP_MAGIC:
                 message = self._get_gzip_message()
-            elif self.buffer[0] in constant.TERMS:
-                del self.buffer[0]
-            elif self.buffer[0] in constant.METHODS:
+            elif self._buffer[0] in constant.TERMS:
+                del self._buffer[0]
+            elif self._buffer[0] in constant.METHODS:
                 self._close_with_http()
             else:
-                self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self.buffer))
+                self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self._buffer))
 
             if message:
-                await self.sink.write(bytes(message))
+                await self._sink.write(bytes(message))
             else:
                 return
 
     def _get_zlib_message(self):
         try:
-            return zlib.decompress(self.buffer)
+            return zlib.decompress(self._buffer)
         except:
             logger.error('ZLIB decompression failed', exc_info=True)
         finally:
-            self.buffer.clear()
+            self._buffer.clear()
 
     def _get_gzip_message(self):
         try:
-            return gzip.decompress(self.buffer)
+            return gzip.decompress(self._buffer)
         except:
             logger.error('GZIP decompression failed', exc_info=True)
         finally:
-            self.buffer.clear()
+            self._buffer.clear()
 
 
-class SecureSyslogProtocol(SSLProtocol):
+class SecureSyslogProtocol(BaseSecureLoggingProtocol):
     PROTOCOL = SyslogProtocol
 
-    def __init__(self, sslcontext, *args, **kwargs):
-        loop = get_event_loop()
-        super(SecureSyslogProtocol, self).__init__(
-            loop=loop,
-            app_protocol=self.PROTOCOL(*args, **kwargs),
-            sslcontext=sslcontext,
-            waiter=None,
-            server_side=True
-        )
 
-
-class SecureGelfProtocol(SecureSyslogProtocol):
+class SecureGelfProtocol(BaseSecureLoggingProtocol):
     PROTOCOL = GelfProtocol
 
 
 class DatagramSyslogProtocol(SyslogProtocol):
-    def connection_made(self, transport):
-        # Don't store UDP transport to avoid closing it on parse failure
-        pass
-
-    def datagram_received(self, data, addr):
-        # Append terminator to simplify parsing
-        self.data_received(data + b'\x00')
+    pass
 
 
-class DatagramGelfProtocol(GelfProtocol, DatagramSyslogProtocol):
-    __slots__ = ['chunks']
+class DatagramGelfProtocol(GelfProtocol):
+    __slots__ = ['_chunks']
 
     def __init__(self, *args, **kwargs):
         super(DatagramGelfProtocol, self).__init__(*args, **kwargs)
-        self.chunks = dict()
+        self._chunks = dict()
 
     def datagram_received(self, data, addr):
         if data[0:2] == constant.GELF_MAGIC:
@@ -213,14 +231,14 @@ class DatagramGelfProtocol(GelfProtocol, DatagramSyslogProtocol):
     def _process_chunk(self, data):
         chunk = ChunkedMessage(data)
         # Abuse the fact that ChunkedMessage hashes by ID
-        if chunk in self.chunks:
-            message = self.chunks[chunk].update(chunk)
+        if chunk in self._chunks:
+            message = self._chunks[chunk].update(chunk)
         else:
-            self.chunks[chunk] = chunk
+            self._chunks[chunk] = chunk
             message = chunk.update()
 
         if message:
-            del self.chunks[chunk]
+            del self._chunks[chunk]
         return message
 
 
