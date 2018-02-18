@@ -3,6 +3,7 @@ import logging
 import zlib
 from asyncio import ensure_future, get_event_loop
 from asyncio.sslproto import SSLProtocol
+from datetime import datetime
 
 from . import constant
 from .gelf import ChunkedMessage
@@ -28,19 +29,15 @@ class BaseLoggingProtocol(object):
     def connection_made(self, transport):
         if hasattr(transport, 'sendto'):
             return
+        else:
+            self._transport = transport
 
-        logger.debug('Got connection from {} to {} using {}'.format(
-            transport.get_extra_info('peername'),
-            transport.get_extra_info('sockname'),
-            transport.__class__.__name__))
-        self._transport = transport
-
-    def data_received(self, data):
-        ensure_future(self._process_data(data))
+    def data_received(self, data, addr=None):
+        ensure_future(self._process_data(data, addr))
 
     def datagram_received(self, data, addr):
         # Append terminator to simplify parsing
-        self.data_received(data + b'\x00')
+        self.data_received(data + b'\x00', addr)
 
     def eof_received(self):
         pass
@@ -73,7 +70,20 @@ class BaseLoggingProtocol(object):
             self._transport.write(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
             self._transport.close()
 
-    async def _process_data(self, data):
+    def _get_non_transparent_framed_message(self):
+        """
+        Handle non-transparently-framed messages by searching for one of several possible terminators
+        https://tools.ietf.org/html/rfc6587#section-3.4.2
+        """
+        for separator in constant.TERMS:
+            message, sep, remainder = self._buffer.partition(bytes([separator]))
+            if sep:
+                if len(message) > constant.MAX_MESSAGE_LENGTH:
+                    message = message[:constant.MAX_MESSAGE_LENGTH]
+                self._buffer = remainder
+                return message
+
+    async def _process_data(self, data, addr=None):
         raise NotImplementedError
 
 
@@ -90,7 +100,7 @@ class BaseSecureLoggingProtocol(SSLProtocol):
 
 
 class SyslogProtocol(BaseLoggingProtocol):
-    async def _process_data(self, data):
+    async def _process_data(self, data, addr=None):
         if self._transport and self._transport.is_closing():
             return
 
@@ -102,15 +112,14 @@ class SyslogProtocol(BaseLoggingProtocol):
                 message = self._get_octet_counted_message()
             elif self._buffer[0] in constant.TERMS:
                 del self._buffer[0]
-            elif self._buffer[0] == constant.LESSTHAN:
-                message = self._get_non_transparent_framed_message()
             elif self._buffer[0] in constant.METHODS:
                 self._close_with_http()
             else:
-                self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self._buffer))
+                message = self._get_non_transparent_framed_message()
 
             if message:
-                await self._sink.write(bytes(message))
+                addr = addr or self._transport.get_extra_info('peername')
+                await self._sink.write(addr[0], bytes(message), datetime.now())
             else:
                 return
 
@@ -126,13 +135,13 @@ class SyslogProtocol(BaseLoggingProtocol):
             length, sep, remainder = self._buffer.partition(b' ')
             if sep:
                 try:
-                    self._buffer = remainder
                     self._length = int(length)
                     if self._length < 0 or self._length > constant.MAX_MESSAGE_LENGTH:
                         raise ValueError
+                    self._buffer = remainder
                 except ValueError:
-                    self._close_with_error('Invalid MSG-LEN {0} for octet-counted message'.format(length))
-                    return
+                    # Handle as random chunk of log noncompliant message that happens to start with numbers
+                    return self._buffer
             else:
                 return
 
@@ -144,22 +153,9 @@ class SyslogProtocol(BaseLoggingProtocol):
         else:
             return
 
-    def _get_non_transparent_framed_message(self):
-        """
-        Handle non-transparently-framed messages by searching for one of several possible terminators
-        https://tools.ietf.org/html/rfc6587#section-3.4.2
-        """
-        for separator in constant.TERMS:
-            message, sep, remainder = self._buffer.partition(bytes([separator]))
-            if sep:
-                if len(message) > constant.MAX_MESSAGE_LENGTH:
-                    message = message[:constant.MAX_MESSAGE_LENGTH]
-                self._buffer = remainder
-                return message
-
 
 class GelfProtocol(BaseLoggingProtocol):
-    async def _process_data(self, data):
+    async def _process_data(self, data, addr=None):
         if self._transport and self._transport.is_closing():
             return
 
@@ -181,7 +177,8 @@ class GelfProtocol(BaseLoggingProtocol):
                 self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self._buffer))
 
             if message:
-                await self._sink.write(bytes(message))
+                addr = addr or self._transport.get_extra_info('peername')
+                await self._sink.write(addr[0], bytes(message), datetime.now())
             else:
                 return
 
@@ -226,8 +223,9 @@ class DatagramGelfProtocol(GelfProtocol):
             data = self._process_chunk(data)
             if not data:
                 return
-        super(DatagramGelfProtocol, self).datagram_received(data, addr)
+        super(DatagramGelfProtocol, self).data_received(data, addr)
 
+    # TODO - enforce 5 second chunk reassembly window
     def _process_chunk(self, data):
         chunk = ChunkedMessage(data)
         # Abuse the fact that ChunkedMessage hashes by ID
