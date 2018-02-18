@@ -10,6 +10,7 @@ from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
                      SecureGelfServer, SecureSyslogServer, SyslogServer)
 from .sink import MessageSink
 from .spool import EventSpool
+from .message import GelfMessage, SyslogMessage
 from . import proxy
 
 
@@ -108,12 +109,12 @@ def listen(**args):
     loop.set_exception_handler(shutdown_exception_handler)
 
     if args.get('gelf', False):
-        message_type = 'gelf'
+        message_class = GelfMessage
         TLS = SecureGelfServer
         TCP = GelfServer
         UDP = DatagramGelfServer
     else:
-        message_type = 'syslog'
+        message_class = SyslogMessage
         TLS = SecureSyslogServer
         TCP = SyslogServer
         UDP = DatagramSyslogServer
@@ -151,7 +152,7 @@ def listen(**args):
 
     try:
         with EventSpool(delivery_stream=args['stream'], spool_dir=args['spool_dir']) as spool:
-            with MessageSink(spool=spool, message_type=message_type) as sink:
+            with MessageSink(spool=spool, message_class=message_class) as sink:
                 for server in servers:
                     loop.run_until_complete(server.start_server(sink=sink))
                 loop.run_forever()

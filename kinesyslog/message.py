@@ -6,67 +6,30 @@ from libuuid import uuid4
 
 import ujson as json
 
-from . import constant
-
 logger = logging.getLogger(__name__)
-header = re.compile('^<\\d{1,3}>(?:(?P<rfc5424>1 )?(?P<timestamp>\\S{20,38}|... .. ..:..:..|-)) ')
 epoch = datetime.utcfromtimestamp(0)
-
-
-def create_events(messages):
-    events = []
-    for message in messages:
-        event = create_event(message)
-        if event is not None:
-            events.append(event)
-    return events
-
-
-def create_event(message):
-    try:
-        start = message[0]
-        message = message.decode()
-        if start == constant.LESSTHAN:
-            is_rfc5424, timestamp = get_message_header(message)
-            timestamp = parse_rfc5424_timestamp(timestamp) if is_rfc5424 else parse_rfc3164_timestamp(timestamp)
-            timestamp = (timestamp - epoch).total_seconds()
-        elif start == constant.OPENBRACKET:
-            timestamp = json.loads(message).get('timestamp', datetime.now())
-        else:
-            raise ValueError('Unable to extract timestamp')
-
-        return {'id': str(uuid4()), 'timestamp': timestamp, 'message': message}
-    except Exception:
-        logger.error('Failed to parse message', exc_info=True)
-
-
-def get_message_header(message):
-    is_rfc5424 = False
-    timestamp = '-'
-    match = header.match(message)
-    if match:
-        is_rfc5424 = match.group('rfc5424') is not None
-        timestamp = match.group('timestamp')
-
-    return (is_rfc5424, timestamp)
+prio_pattern = re.compile(r"""^<(?P<prio>\d{1,3})>
+                                (?P<content>.*)""", re.VERBOSE)
+syslog_pattern = re.compile(r"""^<(?P<prio>\d{1,3})>
+                               (?:(?P<rfc5424>1\ )?
+                                  (?P<timestamp>\S{20,38}|...\ ..\ ..:..:..(\ 20\d\d)?|-))\ ?
+                                  (?P<hostname>\S+)*\ ?
+                                  (?P<content>.*)""", re.VERBOSE | re.IGNORECASE)
 
 
 def parse_rfc3164_timestamp(timestamp):
-    if timestamp[0] == '-':
-        return datetime.now()
+    if len(timestamp) <= 15:
+        timestamp = '{0} {1}'.format(timestamp, datetime.today().year)
+    parsed_time = datetime.strptime(timestamp, '%b %d %H:%M:%S %Y')
 
-    current_year = datetime.today().year
-    timestamp_with_year = '{0:d} {1}'.format(current_year, timestamp)
-    # FIXME - if the parsed time is off from now by more than a few months,
-    # the year might have rolled over between the time we got the message
-    # and when we're parsing it. Subtract a year?
-    return datetime.strptime(timestamp_with_year, '%Y %b %d %H:%M:%S')
+    # If the timetamp is more than 2 days in the future, it's probably from last year
+    if (parsed_time - datetime.now()).days > 2:
+        parsed_time = parsed_time.replace(year=parsed_time.year - 1)
+
+    return parsed_time
 
 
 def parse_rfc5424_timestamp(timestamp):
-    if timestamp[0] == '-':
-        return datetime.now()
-
     if timestamp[-1] == 'Z':
         return parse_rfc5424_date(timestamp[:-1])
     else:
@@ -82,3 +45,78 @@ def parse_rfc5424_date(timestamp):
         return datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%f")
     else:
         return datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S")
+
+
+def format_rfc5424_date(timestamp):
+    return datetime.strftime(timestamp, "%Y-%m-%dT%H:%M:%S.%f")
+
+
+def assign_uuid(message, timestamp):
+    if isinstance(timestamp, datetime):
+        timestamp = (timestamp - epoch).total_seconds()
+
+    return {'id': str(uuid4()),
+            'message': message,
+            'timestamp': timestamp,
+            }
+
+
+class BaseMessage(object):
+    name = 'base'
+
+    @classmethod
+    def create_events(cls, source, messages):
+        for message, recv_ts in messages:
+            yield cls.create_event(source, message.decode(), recv_ts)
+
+    @classmethod
+    def create_event(cls, source, message, recv_ts):
+        raise NotImplementedError
+
+
+class GelfMessage(BaseMessage):
+    name = 'gelf_message'
+
+    @classmethod
+    def create_event(cls, source, message, recv_ts):
+        try:
+            timestamp = json.loads(message).get('timestamp', recv_ts)
+        except:
+            timestamp = recv_ts
+
+        return assign_uuid(message, timestamp)
+
+
+class SyslogMessage(BaseMessage):
+    name = 'syslog_message'
+
+    @classmethod
+    def create_event(cls, source, message, recv_ts):
+        parts = cls.get_message_header(source, message)
+        try:
+            timestamp = parse_rfc5424_timestamp(parts['timestamp']) if parts['rfc5424'] else parse_rfc3164_timestamp(parts['timestamp'])
+        except Exception:
+            timestamp = None
+
+        if not parts['prio']:
+            parts['prio'] = '13'
+
+        if not isinstance(timestamp, datetime):
+            timestamp = recv_ts
+            message = '<{0}>1 {1} {2} {3}'.format(parts['prio'], format_rfc5424_date(timestamp), source, parts['content'])
+
+        return assign_uuid(message, timestamp)
+
+    @classmethod
+    def get_message_header(cls, source, message):
+        for pattern in [syslog_pattern, prio_pattern]:
+            match = pattern.match(message)
+            if match:
+                return match.groupdict()
+        return {
+            'prio': None,
+            'rfc5242': None,
+            'timestamp': None,
+            'hostname': None,
+            'content': message,
+            }
