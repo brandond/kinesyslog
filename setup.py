@@ -17,7 +17,7 @@ with open('requirements.txt') as f:
 setup(
     name='kinesyslog',
     version_command=('git describe --tags --dirty', 'pep440-git-full'),
-    description='Syslog and GELF relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS; RFC2164, RFC5424, RFC5425, RFC6587, GELF v1.1.',
+    description='Syslog and GELF relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS; RFC3164, RFC5424, RFC5425, RFC6587, GELF v1.1.',
     long_description=readme,
     author='Brandon Davidson',
     author_email='brad@oatmail.org',
@@ -31,10 +31,11 @@ setup(
     install_requires=requirements,
     python_requires='>=3.5',
     classifiers=[
-        'Development Status :: 4 - Beta',
+        'Development Status :: 5 - Production/Stable',
         'License :: OSI Approved :: Apache Software License',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
+        'Topic :: Internet :: Log Analysis',
         'Topic :: System :: Logging',
     ],
     extras_require={

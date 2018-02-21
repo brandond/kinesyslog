@@ -1,4 +1,4 @@
 python-libuuid
 boto3 >= 1.4.7
 click
-ujson
+ujson < 2.0.0

@@ -2,7 +2,7 @@ kinesyslog
 ==========
 [![PyPI version](https://badge.fury.io/py/kinesyslog.svg)](https://badge.fury.io/py/kinesyslog)
 
-Syslog and GELF relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS; RFC2164, RFC5424, RFC5425, RFC6587, GELF v1.1.
+Syslog and GELF relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS; RFC3164, RFC5424, RFC5425, RFC6587, GELF v1.1.
 
 Prerequisites
 -------------
@@ -29,6 +29,7 @@ Options:
   --key PATH             Private key file for TLS listener.  [default: localhost.key]
   --tcp-port INTEGER     Bind port for TCP listener; 0 to disable.  [default: 0]
   --udp-port INTEGER     Bind port for UDP listener; 0 to disable.  [default: 0]
+  --proxy-protocol       Enable Proxy Protocol v1/v2 support for TCP and TLS listeners.
   --spool-dir DIRECTORY  Spool directory for compressed records prior to upload.  [default: /tmp]
   --region TEXT          The region to use. Overrides config/env settings.
   --profile TEXT         Use a specific profile from your credential file.
@@ -40,7 +41,37 @@ Options:
 Record Format
 -------------
 
-When delivered to S3, the objects will contain multiple concatenated GZip-compressed records in JSON format. The records are near-identical to those created by CloudWatch Logs subscriptions. The 'logGroup', 'logStream', and 'subscriptionFilter' fields are set to the message type (syslog or gelf), and the ID field is a GUID instead of a numeric string. Event timestamps are floats instead of ints.
+When delivered to S3, the objects will contain multiple concatenated GZip-compressed records in JSON format. The records are near-identical to those created by [CloudWatch Logs subscriptions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs//SubscriptionFilters.html#FirehoseExample) with a few caveats:
+* The 'logGroup' and 'subscriptionFilter' fields are set to the message type ('syslog_message' or 'gelf_message')
+* The 'logStream' field contains the IP address that the message was received from. Note that this is probably NOT the same as the 'source' field in the payload, since that's (hopefully) a FQDN.
+* The 'timestamp' field contains a float instead of an int, for additional precision.
+* The 'id' field is a GUID instead of a numeric string.
+
+
+**Sample Record**
+```json
+{
+   "owner" : "123456789012",
+   "logGroup" : "syslog_message",
+   "logStream" : "127.0.0.1",
+   "subscriptionFilters" : [
+      "syslog_message"
+   ],
+   "messageType" : "DATA_MESSAGE",
+   "logEvents" : [
+      {
+         "id" : "363f3136-9356-443b-9eee-ce72d32d2307",
+         "timestamp" : 1519247270.23988,
+         "message" : "<13>1 2018-02-21T21:07:50.239881+00:00 host.example.com user 4326 - [timeQuality tzKnown=\"1\" isSynced=\"0\"] Hello, World!"
+      },
+      {
+         "id" : "fae5ea37-972a-4bc5-a259-0d5404680758",
+         "timestamp" : 1519247271.71264,
+         "message" : "<13>1 2018-02-21T21:07:51.712636+00:00 host.example.com user 4327 - [timeQuality tzKnown=\"1\" isSynced=\"0\"] I, for one, welcome our new insect overlords"
+      }
+   ]
+}
+```
 
 Data Flow
 ---------
