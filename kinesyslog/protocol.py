@@ -185,7 +185,7 @@ class GelfProtocol(BaseLoggingProtocol):
     def _get_zlib_message(self):
         try:
             return zlib.decompress(self._buffer)
-        except:
+        except Exception:
             logger.error('ZLIB decompression failed', exc_info=True)
         finally:
             self._buffer.clear()
@@ -193,7 +193,7 @@ class GelfProtocol(BaseLoggingProtocol):
     def _get_gzip_message(self):
         try:
             return gzip.decompress(self._buffer)
-        except:
+        except Exception:
             logger.error('GZIP decompression failed', exc_info=True)
         finally:
             self._buffer.clear()

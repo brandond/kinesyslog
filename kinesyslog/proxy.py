@@ -1,5 +1,7 @@
 import logging
-from asyncio import transports, protocols, get_event_loop
+import socket
+import struct
+from asyncio import get_event_loop, protocols, transports
 
 from . import constant
 
@@ -134,16 +136,71 @@ class _BaseProxyProtocol(protocols.Protocol):
                 self._extra['peername'] = (src_addr.decode(), int(src_port))
                 self._extra['sockname'] = (dst_addr.decode(), int(dst_port))
                 self._start_session(payload)
-            except Exception as e:
-                self._close_with_error('PROXY protocol error: invalid header: {}'.format(e))
+            except Exception:
+                self._close_with_error('PROXY protocol error: invalid header')
 
     def _parse_proxy20(self):
-        raise NotImplementedError
+        if len(self._buffer) < 16:
+            self._close_with_error('PROXY protocol error: invalid header')
+
+        version = self._buffer[12] & 0xF0
+        command = self._buffer[12] & 0x0F
+        family = self._buffer[13] & 0xF0
+        protocol = self._buffer[13] * 0x0F  # NOQA F841
+        addr_len = struct.unpack('!H', self._buffer[14:16])[0]
+
+        tlv_end = addr_len + 16
+        if len(self._buffer) < tlv_end:
+            # Don't have entire header yet; wait for more to come in
+            return
+
+        if version != 0x20:
+            self._close_with_error('PROXY protocol error: invalid version')
+
+        if command not in constant.PROXY20_COMMANDS:
+            self._close_with_error('PROXY protocol error: invalid command')
+
+        if constant.PROXY20_COMMANDS[command] == 'proxy':
+            if family not in constant.PROXY20_FAMILIES:
+                self._close_with_error('PROXY protocol error: invalid address family')
+
+            if constant.PROXY20_FAMILIES[family] == 'inet':
+                src_ip, dst_ip, src_port, dst_port = struct.unpack('!4s4sHH', self._buffer[16:28])
+                self._extra['peername'] = (socket.inet_ntop(socket.AF_INET, src_ip), src_port)
+                self._extra['sockname'] = (socket.inet_ntop(socket.AF_INET, dst_ip), dst_port)
+                self._parse_tlv_data(28, tlv_end)
+            elif constant.PROXY20_FAMILIES[family] == 'inet6':
+                src_ip, dst_ip, src_port, dst_port = struct.unpack('!16s16sHH', self._buffer[16:52])
+                self._extra['peername'] = (socket.inet_ntop(socket.AF_INET6, src_ip), src_port)
+                self._extra['sockname'] = (socket.inet_ntop(socket.AF_INET6, dst_ip), dst_port)
+                self._parse_tlv_data(52, tlv_end)
+            elif constant.PROXY20_FAMILIES[family] == 'unix':
+                src_addr, dst_addr = struct.unpack('!108s108s', self._buffer[16:232])
+                self._extra['peername'] = (src_addr.rstrip(b'\x00'),)
+                self._extra['sockname'] = (dst_addr.rstrip(b'\x00'),)
+                self._parse_tlv_data(232, tlv_end)
+
+            self._start_session(self._buffer[tlv_end:])
+
+    def _parse_tlv_data(self, start, end):
+        try:
+            while start < end and start < len(self._buffer):
+                tlv_type = self._buffer[start]
+                tlv_len = struct.unpack('!H', self._buffer[start+1:start+3])[0]
+                if tlv_type in constant.PROXY20_TLV_TYPES:
+                    tlv_type = constant.PROXY20_TLV_TYPES[tlv_type]
+                    if tlv_type != 'PP2_TYPE_NOOP':
+                        tlv_value = bytes(self._buffer[start+3:start+3+tlv_len])
+                        self._extra[tlv_type] = tlv_value
+                else:
+                    logger.warn('Unknown TLV type 0x{0:x}'.format(tlv_type))
+                start += 3 + tlv_len
+        except Exception:
+            self._close_with_error('PROXY protocol error: Invalid TLV data')
 
     def _start_session(self, data):
         self._buffer.clear()
         self._app_protocol.connection_made(self._app_transport)
-        logger.debug('Application protocol state: {}'.format(self._app_protocol.__dict__))
         self._session_established = True
         self.data_received(data)
 
