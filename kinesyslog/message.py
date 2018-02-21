@@ -81,7 +81,7 @@ class GelfMessage(BaseMessage):
     def create_event(cls, source, message, recv_ts):
         try:
             timestamp = json.loads(message).get('timestamp', recv_ts)
-        except:
+        except Exception:
             timestamp = recv_ts
 
         return assign_uuid(message, timestamp)

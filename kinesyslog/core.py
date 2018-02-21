@@ -6,12 +6,12 @@ from tempfile import gettempdir
 
 import click
 
+from . import proxy
+from .message import GelfMessage, SyslogMessage
 from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
                      SecureGelfServer, SecureSyslogServer, SyslogServer)
 from .sink import MessageSink
 from .spool import EventSpool
-from .message import GelfMessage, SyslogMessage
-from . import proxy
 
 
 def shutdown_exception_handler(loop, context):
@@ -141,7 +141,7 @@ def listen(**args):
         if args.get('udp_port', None):
             for port in args['udp_port']:
                 servers.append(UDP(host=args['address'], port=port))
-    except:
+    except Exception:
         logging.error('Failed to start server', exc_info=True)
 
     if not servers:

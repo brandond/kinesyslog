@@ -63,7 +63,7 @@ class EventSpool(object):
                         try:
                             with open(request_file, 'rb') as fh:
                                 request_kwargs['Records'].append({'Data': fh.read()})
-                        except:
+                        except Exception:
                             logger.error('Failed to read file {0} from spool'.format(request_file), exc_info=True)
                             return
 
@@ -73,7 +73,7 @@ class EventSpool(object):
                             session = Session(profile_name=self.profile_name)
                             client = session.client('firehose', config=self.config)
                             response = client.put_record_batch(**request_kwargs)
-                        except:
+                        except Exception:
                             logger.error('Firehose put_record_batch failed', exc_info=True)
                             return
 
@@ -82,7 +82,7 @@ class EventSpool(object):
                                 logger.debug('Firehose record succeeded: {0}'.format(request_files[i]))
                                 try:
                                     os.unlink(request_files[i])
-                                except:
+                                except Exception:
                                     logger.error('Failed to unlink successfully processed record: {0}'.format(request_files[i]))
                             else:
                                 logger.warning('Firehose record failed: [{ErrorCode}] {ErrorMessage}'.format(**status))

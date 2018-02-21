@@ -2,9 +2,9 @@ import logging
 import math
 import time
 from asyncio import get_event_loop
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from gzip import compress
-from collections import defaultdict
 
 from boto3 import Session
 
@@ -31,7 +31,7 @@ class MessageSink(object):
             session = Session(profile_name=spool.profile_name)
             client = session.client('sts', config=spool.config)
             self.account = client.get_caller_identity()['Account']
-        except:
+        except Exception:
             logger.warn('Unable to determine AWS Account ID; using default value.')
 
     def __enter__(self):
