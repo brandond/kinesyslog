@@ -8,9 +8,6 @@ chdir(dirname(abspath(__file__)))
 
 version = {}
 
-with open("kinesyslog/version.py") as fp:
-    exec(fp.read(), version)
-
 with open('README.rst') as f:
     readme = f.read()
 
@@ -19,13 +16,12 @@ with open('requirements.txt') as f:
 
 setup(
     name='kinesyslog',
-    version=version['__version__'],
+    version_command=('git describe --tags --dirty', 'pep440-git-full'),
     description='Syslog and GELF relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS; RFC2164, RFC5424, RFC5425, RFC6587, GELF v1.1.',
     long_description=readme,
     author='Brandon Davidson',
     author_email='brad@oatmail.org',
     url='https://github.com/brandond/kinesyslog',
-    download_url='https://github.com/brandond/kinesyslog/tarball/{}'.format(version['__version__']),
     license='Apache',
     packages=find_packages(exclude=('docs')),
     entry_points={
@@ -41,4 +37,9 @@ setup(
         'Programming Language :: Python :: 3.6',
         'Topic :: System :: Logging',
     ],
+    extras_require={
+        'dev': [
+            'setuptools-version-command',
+        ]
+    },
 )
