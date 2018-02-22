@@ -48,22 +48,9 @@ def shutdown_exception_handler(loop, context):
 )
 @click.option(
     '--proxy-protocol',
-    is_flag=True,
-    help='Enable Proxy Protocol v1/v2 support for TCP and TLS listeners.',
-)
-@click.option(
-    '--udp-port',
     type=int,
-    help='Bind port for UDP listener; 0 to disable.',
-    default=0,
-    show_default=True,
-    multiple=True,
-)
-@click.option(
-    '--tcp-port',
-    type=int,
-    help='Bind port for TCP listener; 0 to disable.',
-    default=0,
+    help='Enable PROXY protocol v1/v2 support on the selected TCP or TLS port; 0 to disable. May be repeated.',
+    default=[0],
     show_default=True,
     multiple=True,
 )
@@ -71,21 +58,33 @@ def shutdown_exception_handler(loop, context):
     '--key',
     type=click.Path(exists=True, readable=True, dir_okay=False, resolve_path=True),
     help='Private key file for TLS listener.',
-    default='localhost.key',
-    show_default=True,
 )
 @click.option(
     '--cert',
     type=click.Path(exists=True, readable=True, dir_okay=False, resolve_path=True),
     help='Certificate file for TLS listener.',
-    default='localhost.crt',
-    show_default=True,
 )
 @click.option(
-    '--port',
+    '--tls-port',
     type=int,
-    help='Bind port for TLS listener; 0 to disable.',
-    default=6514,
+    help='Bind port for TLS listener; 0 to disable. May be repeated.',
+    default=[6514],
+    show_default=True,
+    multiple=True,
+)
+@click.option(
+    '--tcp-port',
+    type=int,
+    help='Bind port for TCP listener; 0 to disable. May be repeated.',
+    default=[0],
+    show_default=True,
+    multiple=True,
+)
+@click.option(
+    '--udp-port',
+    type=int,
+    help='Bind port for UDP listener; 0 to disable. May be repeated.',
+    default=[0],
     show_default=True,
     multiple=True,
 )
@@ -107,7 +106,6 @@ def listen(**args):
     logging.basicConfig(level='INFO', format='%(asctime)-15s %(levelname)s:%(name)s %(message)s')
     loop = get_event_loop()
     loop.set_exception_handler(shutdown_exception_handler)
-
     if args.get('gelf', False):
         message_class = GelfMessage
         TLS = SecureGelfServer
@@ -119,10 +117,6 @@ def listen(**args):
         TCP = SyslogServer
         UDP = DatagramSyslogServer
 
-    if args.get('proxy_protocol', False):
-        TLS = proxy.wrap(TLS)
-        TCP = proxy.wrap(TCP)
-
     if args.get('debug', False):
         logging.getLogger('kinesyslog').setLevel('DEBUG')
         logging.getLogger('asyncio').setLevel('INFO')
@@ -132,19 +126,22 @@ def listen(**args):
 
     servers = []
     try:
-        if args.get('port', None):
-            for port in args['port']:
-                servers.append(TLS(host=args['address'], port=port, certfile=args['cert'], keyfile=args['key']))
-        if args.get('tcp_port', None):
-            for port in args['tcp_port']:
-                servers.append(TCP(host=args['address'], port=port))
-        if args.get('udp_port', None):
-            for port in args['udp_port']:
+        for port in args['tls_port']:
+            if port:
+                server = proxy.wrap(TLS) if port in args['proxy_protocol'] else TLS
+                servers.append(server(host=args['address'], port=port, certfile=args['cert'], keyfile=args['key']))
+        for port in args['tcp_port']:
+            if port:
+                server = proxy.wrap(TCP) if port in args['proxy_protocol'] else TCP
+                servers.append(server(host=args['address'], port=port))
+        for port in args['udp_port']:
+            if port:
                 servers.append(UDP(host=args['address'], port=port))
     except Exception:
         logging.error('Failed to start server', exc_info=True)
 
     if not servers:
+        logging.error('No servers configured! You must enable at least one UDP, TCP, or TLS port.')
         return
 
     for signame in ('SIGINT', 'SIGTERM'):
