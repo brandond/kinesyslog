@@ -57,7 +57,7 @@ def assign_uuid(message, timestamp):
 
     return {'id': str(uuid4()),
             'message': message,
-            'timestamp': timestamp,
+            'timestamp': int(round(timestamp * 1000)),
             }
 
 

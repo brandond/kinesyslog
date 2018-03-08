@@ -44,7 +44,6 @@ Record Format
 When delivered to S3, the objects will contain multiple concatenated GZip-compressed records in JSON format. The records are near-identical to those created by [CloudWatch Logs subscriptions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs//SubscriptionFilters.html#FirehoseExample) with a few caveats:
 * The 'logGroup' and 'subscriptionFilter' fields are set to the message type ('syslog_message' or 'gelf_message')
 * The 'logStream' field contains the IP address that the message was received from. Note that this is probably NOT the same as the 'source' field in the payload, since that's (hopefully) a FQDN.
-* The 'timestamp' field contains a float instead of an int, for additional precision.
 * The 'id' field is a GUID instead of a numeric string.
 
 
@@ -61,12 +60,12 @@ When delivered to S3, the objects will contain multiple concatenated GZip-compre
    "logEvents" : [
       {
          "id" : "363f3136-9356-443b-9eee-ce72d32d2307",
-         "timestamp" : 1519247270.23988,
+         "timestamp" : 1519247270240,
          "message" : "<13>1 2018-02-21T21:07:50.239881+00:00 host.example.com user 4326 - [timeQuality tzKnown=\"1\" isSynced=\"0\"] Hello, World!"
       },
       {
          "id" : "fae5ea37-972a-4bc5-a259-0d5404680758",
-         "timestamp" : 1519247271.71264,
+         "timestamp" : 1519247271713,
          "message" : "<13>1 2018-02-21T21:07:51.712636+00:00 host.example.com user 4327 - [timeQuality tzKnown=\"1\" isSynced=\"0\"] I, for one, welcome our new insect overlords"
       }
    ]
