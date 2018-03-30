@@ -16,11 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 class MessageSink(object):
-    __slots__ = ['spool', 'loop', 'executor', 'size', 'count', 'messages', 'flushed', 'message_class', 'account']
+    __slots__ = ['spool', 'loop', 'executor', 'size', 'count', 'messages', 'flushed', 'message_class', 'account', 'raw']
 
-    def __init__(self, spool, message_class):
+    def __init__(self, spool, message_class, raw):
         self.spool = spool
         self.message_class = message_class
+        self.raw = raw
         self.loop = get_event_loop()
         self.executor = ProcessPoolExecutor()
         self.executor._start_queue_management_thread()
@@ -55,11 +56,11 @@ class MessageSink(object):
         self.flushed = time.time()
 
     async def flush_async(self):
-        self.loop.run_in_executor(self.executor, self._spool_messages, self.spool, self.messages, self.size, self.message_class, self.account)
+        self.loop.run_in_executor(self.executor, self._spool_messages, self.spool, self.messages, self.size, self.message_class, self.account, self.raw)
         self.clear()
 
     def flush(self):
-        self._spool_messages(self.spool, self.messages, self.size, self.message_class, self.account)
+        self._spool_messages(self.spool, self.messages, self.size, self.message_class, self.account, self.raw)
         self.clear()
 
     def _schedule_flush(self):
@@ -72,17 +73,17 @@ class MessageSink(object):
         self._schedule_flush()
 
     @classmethod
-    def _spool_messages(cls, spool, messages, size, message_class, account):
+    def _spool_messages(cls, spool, messages, size, message_class, account, raw):
         for i_source, i_messages in messages.items():
-            events = message_class.create_events(i_source, i_messages)
+            events = list(message_class.create_events(i_source, i_messages))
             record = cls._prepare_record(i_source, events, message_class.name, account)
-            compressed_record = cls._compress_record(record)
+            compressed_record = cls._compress_record(raw, record)
             logger.debug('Events for {0} compressed from {1} to {2} bytes (with JSON framing)'.format(i_source, size, len(compressed_record)))
 
-            if len(compressed_record) > constant.MAX_RECORD_SIZE:
+            if len(compressed_record) * 1.2 > constant.MAX_RECORD_SIZE: # Add multiplier to increase split_count by 20%
                 # This approach naievely hopes that splitting a record into even parts will put it
                 # below the max record size. Further tuning may be required.
-                split_count = math.ceil(len(compressed_record) / constant.MAX_RECORD_SIZE)
+                split_count = math.ceil(len(compressed_record) * 1.2 / constant.MAX_RECORD_SIZE)
                 logger.warning('Compressed record size of {0} bytes exceeds maximum Firehose record size of {1} bytes; splitting into {2} records'.format(
                     len(compressed_record),
                     constant.MAX_RECORD_SIZE,
@@ -92,7 +93,7 @@ class MessageSink(object):
                 size = int(len(record['logEvents']) / split_count)
                 while start < len(record['logEvents']):
                     record_part = cls._prepare_record(i_source, record['logEvents'][start:start+size], message_class.name, account)
-                    compressed_record = cls._compress_record(record_part)
+                    compressed_record = cls._compress_record(raw, record_part)
                     spool.write(compressed_record)
                     start += size
             else:
@@ -110,5 +111,13 @@ class MessageSink(object):
         }
 
     @classmethod
-    def _compress_record(cls, record):
-        return compress(json.dumps(record).encode())
+    def _compress_record(cls, raw, record):
+        if raw:
+            events = record['logEvents']
+            messages = [m['message'].split(' ', 3)[3] + '\n' for m in events] # Leave only message
+            return ''.join(messages).encode()
+        return compress(MessageSink.serialize(record))
+
+    @classmethod
+    def serialize(cls, data):
+        return json.dumps(data).encode()
