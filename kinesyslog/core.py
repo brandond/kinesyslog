@@ -25,6 +25,11 @@ def shutdown_exception_handler(loop, context):
     help='Enable debug logging to STDERR.',
 )
 @click.option(
+    '--raw',
+    is_flag=True,
+    help='Disable compressing and just write data to Firehose',
+)
+@click.option(
     '--gelf',
     is_flag=True,
     help='Listen for messages in Graylog Extended Log Format (GELF) instead of Syslog.',
@@ -149,7 +154,7 @@ def listen(**args):
 
     try:
         with EventSpool(delivery_stream=args['stream'], spool_dir=args['spool_dir']) as spool:
-            with MessageSink(spool=spool, message_class=message_class) as sink:
+            with MessageSink(spool=spool, message_class=message_class, raw=args.get('raw', False)) as sink:
                 for server in servers:
                     loop.run_until_complete(server.start_server(sink=sink))
                 loop.run_forever()
