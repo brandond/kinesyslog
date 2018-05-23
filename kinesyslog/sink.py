@@ -8,7 +8,7 @@ from gzip import compress
 
 from boto3 import Session
 
-import ujson as json
+import ujson
 
 from . import constant
 
@@ -40,8 +40,8 @@ class MessageSink(object):
     def __exit__(self, exc_type, exc_value, traceback):
         self.flush()
 
-    async def write(self, source, message, timestamp):
-        self.messages[source].append((message, timestamp))
+    async def write(self, source, dest, message, timestamp):
+        self.messages[(source, dest)].append((message, timestamp))
         self.size += len(message)
         self.count += 1
         if self.size > constant.FLUSH_SIZE:
@@ -73,11 +73,12 @@ class MessageSink(object):
 
     @classmethod
     def _spool_messages(cls, spool, messages, size, message_class, account):
-        for i_source, i_messages in messages.items():
-            events = message_class.create_events(i_source, i_messages)
-            record = cls._prepare_record(i_source, events, message_class.name, account)
+        for (source, dest), values in messages.items():
+            group = '/kinesyslog/{0}/{1}'.format(message_class.name, dest)
+            events = message_class.create_events(source, values)
+            record = cls._prepare_record(account, group, source, events)
             compressed_record = cls._compress_record(record)
-            logger.debug('Events for {0} compressed from {1} to {2} bytes (with JSON framing)'.format(i_source, size, len(compressed_record)))
+            logger.debug('Events for {0} > {1} compressed from {2} to {3} bytes (with JSON framing)'.format(group, source, size, len(compressed_record)))
 
             if len(compressed_record) > constant.MAX_RECORD_SIZE:
                 # This approach naievely hopes that splitting a record into even parts will put it
@@ -91,7 +92,7 @@ class MessageSink(object):
                 start = 0
                 size = int(len(record['logEvents']) / split_count)
                 while start < len(record['logEvents']):
-                    record_part = cls._prepare_record(i_source, record['logEvents'][start:start+size], message_class.name, account)
+                    record_part = cls._prepare_record(account, group, source, record['logEvents'][start:start+size])
                     compressed_record = cls._compress_record(record_part)
                     spool.write(compressed_record)
                     start += size
@@ -99,16 +100,22 @@ class MessageSink(object):
                 spool.write(compressed_record)
 
     @classmethod
-    def _prepare_record(cls, source, events, class_name, account):
+    def _prepare_record(cls, owner, group, stream, events, filters=[], type='DATA_MESSAGE'):
+        if not isinstance(filters, list):
+            filters = [filters]
+
+        if not filters:
+            filters = [group]
+
         return {
-            'owner': account,
-            'logGroup': class_name,
-            'logStream': source,
-            'subscriptionFilters': [class_name],
-            'messageType': 'DATA_MESSAGE',
+            'owner': owner,
+            'logGroup': group,
+            'logStream': stream,
+            'subscriptionFilters': filters,
+            'messageType': type,
             'logEvents': events,
         }
 
     @classmethod
     def _compress_record(cls, record):
-        return compress(json.dumps(record).encode())
+        return compress(ujson.dumps(record, escape_forward_slashes=False).encode())

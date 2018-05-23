@@ -43,7 +43,7 @@ Record Format
 -------------
 
 When delivered to S3, the objects will contain multiple concatenated GZip-compressed records in JSON format. The records are near-identical to those created by [CloudWatch Logs subscriptions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs//SubscriptionFilters.html#FirehoseExample) with a few caveats:
-* The 'logGroup' and 'subscriptionFilter' fields are set to the message type ('syslog_message' or 'gelf_message')
+* The 'logGroup' and 'subscriptionFilter' fields are set to "/kinesyslog/\<PROTOCOL\>/\<PORT\>", where `<PROTOCOL>` is either "syslog" or "gelf", and `<PORT>` is the TCP or UDP port on which the message was received.
 * The 'logStream' field contains the IP address that the message was received from. Note that this is probably NOT the same as the 'source' field in the payload, since that's (hopefully) a FQDN.
 * The 'id' field is a GUID instead of a numeric string.
 
@@ -52,10 +52,10 @@ When delivered to S3, the objects will contain multiple concatenated GZip-compre
 ```json
 {
    "owner" : "123456789012",
-   "logGroup" : "syslog_message",
+   "logGroup" : "/kinesyslog/syslog/514",
    "logStream" : "127.0.0.1",
    "subscriptionFilters" : [
-      "syslog_message"
+      "/kinesyslog/syslog/514"
    ],
    "messageType" : "DATA_MESSAGE",
    "logEvents" : [

@@ -17,7 +17,7 @@ class DefaultProtocol(object):
 
 
 class BaseLoggingProtocol(object):
-    __slots__ = ['_sink', '_length', '_buffer', '_transport']
+    __slots__ = ['_sink', '_length', '_buffer', '_transport', '_sockname']
     PROTOCOL = DefaultProtocol
 
     def __init__(self, sink):
@@ -25,8 +25,10 @@ class BaseLoggingProtocol(object):
         self._length = 0
         self._buffer = bytearray()
         self._transport = None
+        self._sockname = None
 
     def connection_made(self, transport):
+        self._sockname = transport.get_extra_info('sockname')
         if hasattr(transport, 'sendto'):
             return
         else:
@@ -83,6 +85,10 @@ class BaseLoggingProtocol(object):
                 self._buffer = remainder
                 return message
 
+    async def _write(self, addr, message):
+        addr = addr or self._transport.get_extra_info('peername')
+        await self._sink.write(addr[0], self._sockname[1], bytes(message), datetime.now())
+
     async def _process_data(self, data, addr=None):
         raise NotImplementedError
 
@@ -118,8 +124,7 @@ class SyslogProtocol(BaseLoggingProtocol):
                 message = self._get_non_transparent_framed_message()
 
             if message:
-                addr = addr or self._transport.get_extra_info('peername')
-                await self._sink.write(addr[0], bytes(message), datetime.now())
+                await self._write(addr, message)
             else:
                 return
 
@@ -177,8 +182,7 @@ class GelfProtocol(BaseLoggingProtocol):
                 self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self._buffer))
 
             if message:
-                addr = addr or self._transport.get_extra_info('peername')
-                await self._sink.write(addr[0], bytes(message), datetime.now())
+                await self._write(addr, message)
             else:
                 return
 

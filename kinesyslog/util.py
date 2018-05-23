@@ -3,7 +3,7 @@ import logging
 import boto3
 import botocore
 
-import ujson as json
+import ujson
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ def get_instance_region():
         if r.content:
             val = r.content.decode('utf-8')
             if val[0] == '{':
-                data = json.loads(val)
+                data = ujson.loads(val)
     except botocore.utils._RetriesExceededError:
         logger.debug("Max number of attempts exceeded ({0}) when attempting to retrieve data from metadata service.".format(fetcher._num_attempts))
 

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from libuuid import uuid4
 
-import ujson as json
+import ujson
 
 logger = logging.getLogger(__name__)
 epoch = datetime.utcfromtimestamp(0)
@@ -75,12 +75,12 @@ class BaseMessage(object):
 
 
 class GelfMessage(BaseMessage):
-    name = 'gelf_message'
+    name = 'gelf'
 
     @classmethod
     def create_event(cls, source, message, recv_ts):
         try:
-            timestamp = json.loads(message).get('timestamp', recv_ts)
+            timestamp = ujson.loads(message).get('timestamp', recv_ts)
         except Exception:
             timestamp = recv_ts
 
@@ -88,7 +88,7 @@ class GelfMessage(BaseMessage):
 
 
 class SyslogMessage(BaseMessage):
-    name = 'syslog_message'
+    name = 'syslog'
 
     @classmethod
     def create_event(cls, source, message, recv_ts):
