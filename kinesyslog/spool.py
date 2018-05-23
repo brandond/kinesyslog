@@ -27,6 +27,7 @@ class EventSpool(object):
         self.profile_name = profile_name
         self.config = Config(retries={'max_attempts': 10}, region_name=get_region(region_name, profile_name))
         self.flushed = 0
+        self._validate_stream()
 
     def __enter__(self):
         return self
@@ -36,7 +37,7 @@ class EventSpool(object):
 
     def write(self, record):
         with NamedTemporaryFile(prefix=self.PREFIX, dir=self.spool_dir, delete=False) as temp:
-            logger.info('Writing {0} byte record to {1}'.format(len(record), temp.name))
+            logger.debug('Writing {0} byte record to {1}'.format(len(record), temp.name))
             temp.write(record)
         if time.time() - self.flushed >= FLUSH_TIME:
             self.flush()
@@ -92,3 +93,10 @@ class EventSpool(object):
             finally:
                 self.flushed = time.time()
                 lock.release()
+
+    def _validate_stream(self):
+        session = Session(profile_name=self.profile_name)
+        client = session.client('firehose', config=self.config)
+        response = client.describe_delivery_stream(DeliveryStreamName=self.delivery_stream)
+        if not response['DeliveryStreamDescription']['DeliveryStreamStatus'] == 'ACTIVE':
+            raise Exception('Firehose Delivery Stream is not active')

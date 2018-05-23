@@ -10,6 +10,8 @@ Prerequisites
 
 This module requires Python 3.5 or better, due to its use of the ``asyncio`` framework.
 
+This module will make use of [python-libuuid](https://pypi.org/project/python-libuuid/) for fast UUID generation, if it is available.
+
 This module uses Boto3 to make API calls against the Kinesis Firehose service. You
 should have a working AWS API environment (~/.aws/credentials,
 environment variables, or EC2 IAM Role) that allows calling Kinesis Firehose's
@@ -35,15 +37,59 @@ Options:
   --region TEXT             The region to use. Overrides config/env settings.
   --profile TEXT            Use a specific profile from your credential file.
   --gelf                    Listen for messages in Graylog Extended Log Format (GELF) instead of Syslog.
+  --group-prefix TEXT       Use the specified LogGroup prefix.  [default: /kinesyslog]
   --debug                   Enable debug logging to STDERR.
   --help                    Show this message and exit.
 ```
 
+Options can also be passed via environment variables. Repeated option values should be separated by whitespace.
+```sh
+export KINESYSLOG_GELF="1"
+export KINESYSLOG_TLS_PORT="0"
+export KINESYSLOG_UDP_PORT="12201"
+export KINESYSLOG_TCP_PORT="12201 12202"
+export KINESYSLOG_STREAM="kinesyslog-gelf-stream"
+
+kinesyslog listen
+```
+
+Installation
+------------
+
+Follow standard steps to install Python packages using `pip`.  It is recommended that you use a virtualenv:
+
+```sh
+virtualenv /opt/kinesyslog
+source /opt/kinesyslog/bin/activate
+pip install --upgrade pip
+pip install kinesyslog
+```
+
+Once kinesyslog has been installed, you can generate and install a systemd unit. You will likely need to run the install command with sudo or as root, and provide the full path to the executable if it is in a virtualenv: ```sudo `which kinesyslog` install```
+
+```
+Usage: kinesyslog install [OPTIONS]
+
+Options:
+  --user TEXT             Configure the service unit to run as specified user.
+                          If not specified, the service runs as root.
+  --system-dir DIRECTORY  Install the service unit to the specified systemd
+                          system directory  [default: /etc/systemd/system]
+  --help                  Show this message and exit.
+```
+
+You should run `systemctl edit kinesyslog` to adjust the service configuration variable specific to your environment - ports, certificates, streams, etc.
+
+If not running on EC2, you will need to ensure that credentials are available to the service; the easiest way to do this is to install `awscli` and run `aws configure` as the user that the service will run as.
+
 Record Format
 -------------
 
-When delivered to S3, the objects will contain multiple concatenated GZip-compressed records in JSON format. The records are near-identical to those created by [CloudWatch Logs subscriptions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs//SubscriptionFilters.html#FirehoseExample) with a few caveats:
-* The 'logGroup' and 'subscriptionFilter' fields are set to "/kinesyslog/\<PROTOCOL\>/\<PORT\>", where `<PROTOCOL>` is either "syslog" or "gelf", and `<PORT>` is the TCP or UDP port on which the message was received.
+When delivered to S3, the objects will contain multiple concatenated GZip-compressed records in JSON format. The records are near-identical to those created by [CloudWatch Logs subscriptions](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/SubscriptionFilters.html#FirehoseExample) with a few caveats:
+* The 'logGroup' and 'subscriptionFilter' fields are set to `<PREFIX>/<FORMAT>/<PORT>`, where:
+  * `<PREFIX>` is the specified prefix; '/kinesyslog' by default.
+  * `<FORMAT>` is the message format, either 'syslog' or 'gelf'.
+  * `<PORT>` is the TCP or UDP port on which the message was received.
 * The 'logStream' field contains the IP address that the message was received from. Note that this is probably NOT the same as the 'source' field in the payload, since that's (hopefully) a FQDN.
 * The 'id' field is a GUID instead of a numeric string.
 

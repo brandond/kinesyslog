@@ -16,11 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 class MessageSink(object):
-    __slots__ = ['spool', 'loop', 'executor', 'size', 'count', 'messages', 'flushed', 'message_class', 'account']
+    __slots__ = ['spool', 'loop', 'executor', 'size', 'count', 'messages', 'flushed', 'message_class', 'account', 'group_prefix']
 
-    def __init__(self, spool, message_class):
+    def __init__(self, spool, message_class, group_prefix):
         self.spool = spool
         self.message_class = message_class
+        self.group_prefix = group_prefix
         self.loop = get_event_loop()
         self.executor = ProcessPoolExecutor()
         self.executor._start_queue_management_thread()
@@ -55,11 +56,12 @@ class MessageSink(object):
         self.flushed = time.time()
 
     async def flush_async(self):
-        self.loop.run_in_executor(self.executor, self._spool_messages, self.spool, self.messages, self.size, self.message_class, self.account)
+        self.loop.run_in_executor(self.executor, self._spool_messages,
+                                  self.spool, self.messages, self.size, self.message_class, self.account, self.group_prefix)
         self.clear()
 
     def flush(self):
-        self._spool_messages(self.spool, self.messages, self.size, self.message_class, self.account)
+        self._spool_messages(self.spool, self.messages, self.size, self.message_class, self.account, self.group_prefix)
         self.clear()
 
     def _schedule_flush(self):
@@ -72,9 +74,9 @@ class MessageSink(object):
         self._schedule_flush()
 
     @classmethod
-    def _spool_messages(cls, spool, messages, size, message_class, account):
+    def _spool_messages(cls, spool, messages, size, message_class, account, group_prefix):
         for (source, dest), values in messages.items():
-            group = '/kinesyslog/{0}/{1}'.format(message_class.name, dest)
+            group = '{0}/{1}/{2}'.format(group_prefix, message_class.name, dest)
             events = message_class.create_events(source, values)
             record = cls._prepare_record(account, group, source, events)
             compressed_record = cls._compress_record(record)

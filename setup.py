@@ -41,6 +41,9 @@ setup(
     extras_require={
         'dev': [
             'setuptools-version-command',
+        ],
+        'libuuid': [
+            'python-libuuid',
         ]
     },
 )

@@ -2,7 +2,12 @@ import logging
 import re
 from datetime import datetime, timedelta
 
-from libuuid import uuid4
+try:
+    from libuuid import uuid4
+    fast_uuid = True
+except ImportError:
+    from uuid import uuid4
+    fast_uuid = False
 
 import ujson
 
@@ -63,9 +68,20 @@ def assign_uuid(message, timestamp):
 
 class BaseMessage(object):
     name = 'base'
+    _uuid_warning = False
+
+    @classmethod
+    def _warn_slow_uuid(cls):
+        if not cls._uuid_warning:
+            cls._uuid_warning = True
+            if fast_uuid:
+                logger.debug('Using fast UUID generation from python-libuuid')
+            else:
+                logger.warn('Not using fast UUID generation from python-libuuid - install libuuid and python-libuuid for 8-10x speedup')
 
     @classmethod
     def create_events(cls, source, messages):
+        cls._warn_slow_uuid()
         for message, recv_ts in messages:
             yield cls.create_event(source, message.decode(), recv_ts)
 
