@@ -1,7 +1,7 @@
 import click
 from pkg_resources import get_distribution
 
-from . import core
+from . import init
 
 
 def _print_version(ctx, param, value):
@@ -24,8 +24,8 @@ def cli():
     pass
 
 
-cli.add_command(core.listen)
-cli.add_command(core.install)
+cli.add_command(init.listen)
+cli.add_command(init.install)
 
 if __name__ == '__main__':
     cli()

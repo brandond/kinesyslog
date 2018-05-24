@@ -18,6 +18,8 @@ from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
 from .sink import MessageSink
 from .spool import EventSpool
 
+logger = logging.getLogger(__name__)
+
 
 def shutdown_exception_handler(loop, context):
     if "exception" not in context or not isinstance(context["exception"], CancelledError):
@@ -172,10 +174,10 @@ def listen(**args):
                 server = proxy.wrap(TLS) if port in args['proxy_protocol'] else TLS
                 servers.append(server(host=args['address'], port=port, certfile=args['cert'], keyfile=args['key']))
     except Exception as e:
-        logging.error('Failed to validate server configuration: {0}'.format(e))
+        logger.error('Failed to validate server configuration: {0}'.format(e))
 
     if not servers:
-        logging.error('No valid servers configured! You must enable at least one UDP, TCP, or TLS port.')
+        logger.error('No valid servers configured! You must enable at least one UDP, TCP, or TLS port.')
         sys.exit(posix.EX_CONFIG)
 
     for signame in ('SIGINT', 'SIGTERM'):
@@ -186,7 +188,7 @@ def listen(**args):
             with MessageSink(spool=spool, message_class=message_class, group_prefix=args['group_prefix']) as sink:
                 for server in servers:
                     loop.run_until_complete(server.start_server(sink=sink))
-                logging.info('Successfully started {} listeners'.format(len(servers)))
+                logger.info('Successfully started {} listeners'.format(len(servers)))
                 loop.run_forever()
     except KeyboardInterrupt:
         tasks = gather(*Task.all_tasks(loop=loop), loop=loop, return_exceptions=True)
@@ -195,7 +197,7 @@ def listen(**args):
         while not tasks.done() and not loop.is_closed():
             loop.run_forever()
     except Exception as e:
-        logging.error('Failed to start Kinesyslog listeners: {0}'.format(e), exc_info=True)
+        logger.error('Failed to start Kinesyslog listeners: {0}'.format(e), exc_info=True)
         if isinstance(e, PermissionError):
             sys.exit(posix.EX_NOPERM)
         else:
