@@ -139,7 +139,7 @@ def validate_user(ctx, param, value):
 )
 @click.command(short_help='List for incoming Syslog messages and submit to Kinesis Firehose')
 def listen(**args):
-    logging.basicConfig(level='INFO', format='%(asctime)-15s %(levelname)s:%(name)s %(message)s')
+    logging.basicConfig(level='INFO', format='<%(levelname)s> %(name)s: %(message)s')
     loop = get_event_loop()
     loop.set_exception_handler(shutdown_exception_handler)
     if args.get('gelf', False):

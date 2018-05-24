@@ -30,7 +30,7 @@ class BaseServer(object):
 class SecureServer(BaseServer):
     def __init__(self, certfile, keyfile, password=None, *args, **kwargs):
         super(SecureServer, self).__init__(*args, **kwargs)
-        logger.info('{0} using cert from {1} and key from {2}'.format(self.__class__.__name__, certfile, keyfile))
+        logger.info('{0} using cert {1} and key {2}'.format(self.__class__.__name__, certfile, keyfile))
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
         ctx.load_cert_chain(certfile, keyfile, password)
         self._args['sslcontext'] = ctx
