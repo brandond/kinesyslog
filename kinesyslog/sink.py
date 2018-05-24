@@ -23,7 +23,7 @@ class MessageSink(object):
         self.message_class = message_class
         self.group_prefix = group_prefix
         self.loop = get_event_loop()
-        self.executor = ProcessPoolExecutor()
+        self.executor = ProcessPoolExecutor(max_workers=1)
         self.executor._start_queue_management_thread()
         self._schedule_flush()
         self.clear()
