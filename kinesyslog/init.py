@@ -11,13 +11,6 @@ from textwrap import dedent
 
 import click
 
-from . import proxy
-from .message import GelfMessage, SyslogMessage
-from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
-                     SecureGelfServer, SecureSyslogServer, SyslogServer)
-from .sink import MessageSink
-from .spool import EventSpool
-
 logger = logging.getLogger(__name__)
 
 
@@ -142,6 +135,21 @@ def listen(**args):
     logging.basicConfig(level='INFO', format='<%(levelname)s> %(name)s: %(message)s')
     loop = get_event_loop()
     loop.set_exception_handler(shutdown_exception_handler)
+
+    if args.get('debug', False):
+        logging.getLogger('kinesyslog').setLevel('DEBUG')
+        logging.getLogger('asyncio').setLevel('INFO')
+        loop.set_debug(True)
+    else:
+        logging.getLogger('botocore').setLevel('ERROR')
+
+    from . import proxy
+    from .message import GelfMessage, SyslogMessage
+    from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
+                         SecureGelfServer, SecureSyslogServer, SyslogServer)
+    from .sink import MessageSink
+    from .spool import EventSpool
+
     if args.get('gelf', False):
         message_class = GelfMessage
         TLS = SecureGelfServer
@@ -152,13 +160,6 @@ def listen(**args):
         TLS = SecureSyslogServer
         TCP = SyslogServer
         UDP = DatagramSyslogServer
-
-    if args.get('debug', False):
-        logging.getLogger('kinesyslog').setLevel('DEBUG')
-        logging.getLogger('asyncio').setLevel('INFO')
-        loop.set_debug(True)
-    else:
-        logging.getLogger('botocore').setLevel('ERROR')
 
     servers = []
     try:

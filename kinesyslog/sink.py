@@ -16,15 +16,13 @@ logger = logging.getLogger(__name__)
 
 
 class MessageSink(object):
-    __slots__ = ['spool', 'loop', 'executor', 'size', 'count', 'messages', 'flushed', 'message_class', 'account', 'group_prefix']
+    __slots__ = ['spool', 'loop', 'size', 'count', 'messages', 'flushed', 'message_class', 'account', 'group_prefix']
 
     def __init__(self, spool, message_class, group_prefix):
         self.spool = spool
         self.message_class = message_class
         self.group_prefix = group_prefix
         self.loop = get_event_loop()
-        self.executor = ProcessPoolExecutor(max_workers=1)
-        self.executor._start_queue_management_thread()
         self._schedule_flush()
         self.clear()
         self.account = '000000000000'
@@ -56,9 +54,10 @@ class MessageSink(object):
         self.flushed = time.time()
 
     async def flush_async(self):
-        self.loop.run_in_executor(self.executor, self._spool_messages,
-                                  self.spool, self.messages, self.size, self.message_class, self.account, self.group_prefix)
+        args = [self.spool, self.messages, self.size, self.message_class, self.account, self.group_prefix]
         self.clear()
+        with ProcessPoolExecutor(max_workers=1) as executor:
+            return self.loop.run_in_executor(executor, self._spool_messages, *args)
 
     def flush(self):
         self._spool_messages(self.spool, self.messages, self.size, self.message_class, self.account, self.group_prefix)

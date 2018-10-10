@@ -2,13 +2,6 @@ import logging
 import re
 from datetime import datetime, timedelta
 
-try:
-    from libuuid import uuid4
-    fast_uuid = True
-except ImportError:
-    from uuid import uuid4
-    fast_uuid = False
-
 import ujson
 
 logger = logging.getLogger(__name__)
@@ -20,6 +13,13 @@ syslog_pattern = re.compile(r"""^<(?P<prio>\d{1,3})>
                                   (?P<timestamp>\S{20,38}|...\ ..\ ..:..:..(\ 20\d\d)?|-))\ ?
                                   (?P<hostname>\S+)*\ ?
                                   (?P<content>.*)""", re.VERBOSE | re.IGNORECASE)
+
+try:
+    from libuuid import uuid4
+    logger.debug('Using fast UUID generation from python-libuuid')
+except ImportError:
+    from uuid import uuid4
+    logger.warn('Not using fast UUID generation from python-libuuid - install libuuid and python-libuuid for 8-10x speedup')
 
 
 def parse_rfc3164_timestamp(timestamp):
@@ -68,22 +68,11 @@ def assign_uuid(message, timestamp):
 
 class BaseMessage(object):
     name = 'base'
-    _uuid_warning = False
-
-    @classmethod
-    def _warn_slow_uuid(cls):
-        if not cls._uuid_warning:
-            cls._uuid_warning = True
-            if fast_uuid:
-                logger.debug('Using fast UUID generation from python-libuuid')
-            else:
-                logger.warn('Not using fast UUID generation from python-libuuid - install libuuid and python-libuuid for 8-10x speedup')
 
     @classmethod
     def create_events(cls, source, messages):
-        cls._warn_slow_uuid()
         for message, recv_ts in messages:
-            yield cls.create_event(source, message.decode(), recv_ts)
+            yield cls.create_event(source, message.decode('utf-8', 'backslashreplace'), recv_ts)
 
     @classmethod
     def create_event(cls, source, message, recv_ts):

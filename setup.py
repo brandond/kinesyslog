@@ -33,6 +33,9 @@ setup(
         'console_scripts': ['kinesyslog=kinesyslog.commands:cli']
     },
     extras_require={
+        'dev': [
+            'setuptools-version-command',
+        ],
         'libuuid': [
             'python-libuuid',
         ]
