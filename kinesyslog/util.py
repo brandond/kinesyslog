@@ -1,7 +1,7 @@
 import logging
 
 import boto3
-import botocore
+import botocore.utils, botocore.exceptions
 
 import ujson
 
@@ -13,15 +13,13 @@ def get_instance_region():
     fetcher = botocore.utils.InstanceMetadataFetcher()
 
     try:
-        r = fetcher._get_request('http://169.254.169.254/latest/dynamic/instance-identity/document', fetcher._timeout, fetcher._num_attempts)
-        if r.content:
-            val = r.content.decode('utf-8')
-            if val[0] == '{':
-                data = ujson.loads(val)
+        r = fetcher._get_request(
+            url='http://169.254.169.254/latest/dynamic/instance-identity/document',
+            needs_retry=fetcher._needs_retry_for_credentials
+        )
+        return ujson.loads(r.text).get('region', None)
     except botocore.utils._RetriesExceededError:
         logger.debug("Max number of attempts exceeded ({0}) when attempting to retrieve data from metadata service.".format(fetcher._num_attempts))
-
-    return data.get('region', None)
 
 
 def get_region(region_name=None, profile_name=None):
