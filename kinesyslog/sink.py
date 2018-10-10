@@ -54,10 +54,9 @@ class MessageSink(object):
         self.flushed = time.time()
 
     async def flush_async(self):
-        args = [self.spool, self.messages, self.size, self.message_class, self.account, self.group_prefix]
-        self.clear()
         with ProcessPoolExecutor(max_workers=1) as executor:
-            return self.loop.run_in_executor(executor, self._spool_messages, *args)
+            self.loop.run_in_executor(executor, self._spool_messages, self.spool, self.messages, self.size, self.message_class, self.account, self.group_prefix)
+        self.clear()
 
     def flush(self):
         self._spool_messages(self.spool, self.messages, self.size, self.message_class, self.account, self.group_prefix)
