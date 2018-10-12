@@ -1,7 +1,8 @@
 import logging
 
 import boto3
-import botocore.utils, botocore.exceptions
+import botocore.exceptions
+import botocore.utils
 
 import ujson
 
@@ -9,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 def get_instance_region():
-    data = {}
     fetcher = botocore.utils.InstanceMetadataFetcher()
 
     try:

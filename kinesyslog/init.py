@@ -131,12 +131,11 @@ def validate_user(ctx, param, value):
     required=True,
 )
 @click.command(short_help='List for incoming Syslog messages and submit to Kinesis Firehose')
-def listen(**args):
-    logging.basicConfig(level='INFO', format='<%(levelname)s> %(name)s: %(message)s')
+def listen(**kwargs):
     loop = get_event_loop()
     loop.set_exception_handler(shutdown_exception_handler)
 
-    if args.get('debug', False):
+    if kwargs.get('debug', False):
         logging.getLogger('kinesyslog').setLevel('DEBUG')
         logging.getLogger('asyncio').setLevel('INFO')
         loop.set_debug(True)
@@ -150,7 +149,7 @@ def listen(**args):
     from .sink import MessageSink
     from .spool import EventSpool
 
-    if args.get('gelf', False):
+    if kwargs.get('gelf', False):
         message_class = GelfMessage
         TLS = SecureGelfServer
         TCP = GelfServer
@@ -163,17 +162,17 @@ def listen(**args):
 
     servers = []
     try:
-        for port in args['udp_port']:
+        for port in kwargs['udp_port']:
             if port:
-                servers.append(UDP(host=args['address'], port=port))
-        for port in args['tcp_port']:
+                servers.append(UDP(host=kwargs['address'], port=port))
+        for port in kwargs['tcp_port']:
             if port:
-                server = proxy.wrap(TCP) if port in args['proxy_protocol'] else TCP
-                servers.append(server(host=args['address'], port=port))
-        for port in args['tls_port']:
+                server = proxy.wrap(TCP) if port in kwargs['proxy_protocol'] else TCP
+                servers.append(server(host=kwargs['address'], port=port))
+        for port in kwargs['tls_port']:
             if port:
-                server = proxy.wrap(TLS) if port in args['proxy_protocol'] else TLS
-                servers.append(server(host=args['address'], port=port, certfile=args['cert'], keyfile=args['key']))
+                server = proxy.wrap(TLS) if port in kwargs['proxy_protocol'] else TLS
+                servers.append(server(host=kwargs['address'], port=port, certfile=kwargs['cert'], keyfile=kwargs['key']))
     except Exception as e:
         logger.error('Failed to validate server configuration: {0}'.format(e))
 
@@ -185,8 +184,9 @@ def listen(**args):
         loop.add_signal_handler(getattr(signal, signame), partial(loop.stop))
 
     try:
-        with EventSpool(delivery_stream=args['stream'], spool_dir=args['spool_dir'], region_name=args['region'], profile_name=args['profile']) as spool:
-            with MessageSink(spool=spool, message_class=message_class, group_prefix=args['group_prefix']) as sink:
+        with EventSpool(delivery_stream=kwargs['stream'], spool_dir=kwargs['spool_dir'],
+                        region_name=kwargs['region'], profile_name=kwargs['profile']) as spool:
+            with MessageSink(spool=spool, message_class=message_class, group_prefix=kwargs['group_prefix']) as sink:
                 for server in servers:
                     loop.run_until_complete(server.start_server(sink=sink))
                 logger.info('Successfully started {} listeners'.format(len(servers)))

@@ -1,4 +1,5 @@
 import click
+import logging
 from pkg_resources import get_distribution
 
 from . import init
@@ -24,6 +25,7 @@ def cli():
     pass
 
 
+logging.basicConfig(level='INFO', format='<%(levelname)s> %(name)s: %(message)s')
 cli.add_command(init.listen)
 cli.add_command(init.install)
 
