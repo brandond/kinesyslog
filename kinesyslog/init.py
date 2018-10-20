@@ -4,7 +4,6 @@ import posix
 import signal
 import sys
 from asyncio import CancelledError, Task, gather, get_event_loop
-from functools import partial
 from pwd import getpwnam
 from tempfile import gettempdir
 from textwrap import dedent
@@ -174,37 +173,43 @@ def listen(**kwargs):
                 server = proxy.wrap(TLS) if port in kwargs['proxy_protocol'] else TLS
                 servers.append(server(host=kwargs['address'], port=port, certfile=kwargs['cert'], keyfile=kwargs['key']))
     except Exception as e:
-        logger.error('Failed to validate server configuration: {0}'.format(e))
+        logger.error('Failed to validate {0} configuration: {1}'.format(
+            e.__traceback__.tb_next.tb_frame.f_code.co_names[1], e))
 
     if not servers:
         logger.error('No valid servers configured! You must enable at least one UDP, TCP, or TLS port.')
         sys.exit(posix.EX_CONFIG)
 
-    for signame in ('SIGINT', 'SIGTERM'):
-        loop.add_signal_handler(getattr(signal, signame), partial(loop.stop))
-
     try:
         with EventSpool(delivery_stream=kwargs['stream'], spool_dir=kwargs['spool_dir'],
                         region_name=kwargs['region'], profile_name=kwargs['profile']) as spool:
             with MessageSink(spool=spool, message_class=message_class, group_prefix=kwargs['group_prefix']) as sink:
-                for server in servers:
-                    loop.run_until_complete(server.start_server(sink=sink))
-                logger.info('Successfully started {} listeners'.format(len(servers)))
-                loop.run_forever()
+                for server in servers[:]:
+                    try:
+                        loop.run_until_complete(server.start_server(sink=sink))
+                    except Exception as e:
+                        logger.error('Failed to start {}: {}'.format(server.__class__.__name__, e))
+                        servers.remove(server)
+                if servers:
+                    logger.info('Successfully started {} listeners'.format(len(servers)))
+                    loop.add_signal_handler(signal.SIGTERM, lambda: loop.stop())
+                    loop.run_forever()
+                else:
+                    raise Exception('All servers failed.')
     except KeyboardInterrupt:
-        tasks = gather(*Task.all_tasks(loop=loop), loop=loop, return_exceptions=True)
-        tasks.add_done_callback(partial(loop.stop))
-        tasks.cancel()
-        while not tasks.done() and not loop.is_closed():
-            loop.run_forever()
+        pass
     except Exception as e:
-        logger.error('Failed to start Kinesyslog listeners: {0}'.format(e), exc_info=True)
+        logger.error('Failed to start Kinesyslog: {0}'.format(e))
         if isinstance(e, PermissionError):
             sys.exit(posix.EX_NOPERM)
         else:
             sys.exit(posix.EX_CONFIG)
     finally:
-        loop.close()
+        tasks = gather(*Task.all_tasks(loop=loop), loop=loop, return_exceptions=True)
+        tasks.add_done_callback(lambda f: loop.stop())
+        tasks.cancel()
+        while not tasks.done() and not loop.is_closed():
+            loop.run_forever()
 
 
 @click.option(

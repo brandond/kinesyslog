@@ -72,7 +72,7 @@ class BaseMessage(object):
     @classmethod
     def create_events(cls, source, messages):
         for message, recv_ts in messages:
-            yield cls.create_event(source, message.decode('utf-8', 'backslashreplace'), recv_ts)
+            yield cls.create_event(source, message, recv_ts)
 
     @classmethod
     def create_event(cls, source, message, recv_ts):
@@ -84,10 +84,11 @@ class GelfMessage(BaseMessage):
 
     @classmethod
     def create_event(cls, source, message, recv_ts):
+        message = message.decode('utf-8', 'backslashreplace')
         try:
             timestamp = ujson.loads(message).get('timestamp', recv_ts)
         except Exception:
-            timestamp = recv_ts
+            timestamp = datetime.utcfromtimestamp(recv_ts)
 
         return assign_uuid(message, timestamp)
 
@@ -97,6 +98,7 @@ class SyslogMessage(BaseMessage):
 
     @classmethod
     def create_event(cls, source, message, recv_ts):
+        message = message.decode('utf-8', 'backslashreplace')
         parts = cls.get_message_header(source, message)
         try:
             timestamp = parse_rfc5424_timestamp(parts['timestamp']) if parts['rfc5424'] else parse_rfc3164_timestamp(parts['timestamp'])
@@ -107,7 +109,7 @@ class SyslogMessage(BaseMessage):
             parts['prio'] = '13'
 
         if not isinstance(timestamp, datetime):
-            timestamp = recv_ts
+            timestamp = datetime.utcfromtimestamp(recv_ts)
             message = '<{0}>1 {1} {2} {3}'.format(parts['prio'], format_rfc5424_date(timestamp), source, parts['content'])
 
         return assign_uuid(message, timestamp)

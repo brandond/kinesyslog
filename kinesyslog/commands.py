@@ -25,7 +25,7 @@ def cli():
     pass
 
 
-logging.basicConfig(level='INFO', format='<%(levelname)s> %(name)s: %(message)s')
+logging.basicConfig(level='INFO', format='[%(process)d]<%(levelname)s> %(name)s: %(message)s')
 cli.add_command(init.listen)
 cli.add_command(init.install)
 

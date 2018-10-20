@@ -1,13 +1,14 @@
 import logging
 import math
-import time
-from asyncio import get_event_loop
+import socket
+import signal
+from asyncio import get_event_loop, gather, Task
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import Process
 from gzip import compress
 
-from boto3 import Session
 
+import msgpack
 import ujson
 
 from . import constant
@@ -16,69 +17,101 @@ logger = logging.getLogger(__name__)
 
 
 class MessageSink(object):
-    __slots__ = ['spool', 'loop', 'size', 'count', 'messages', 'flushed', 'message_class', 'account', 'group_prefix']
-
     def __init__(self, spool, message_class, group_prefix):
-        self.spool = spool
-        self.message_class = message_class
-        self.group_prefix = group_prefix
+        (rsock, wsock) = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        rsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_LENGTH)
+        wsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_LENGTH)
+        wsock.setblocking(False)
+        wsock.setblocking(False)
+
         self.loop = get_event_loop()
-        self._schedule_flush()
-        self.clear()
-        self.account = '000000000000'
-        try:
-            session = Session(profile_name=spool.profile_name)
-            client = session.client('sts', config=spool.config)
-            self.account = client.get_caller_identity()['Account']
-        except Exception:
-            logger.warn('Unable to determine AWS Account ID; using default value.')
+        self.sock = wsock
+        self.worker = MessageSinkWorker(spool, message_class, group_prefix, rsock, daemon=True)
+        self.worker.start()
+
+    async def write(self, *args):
+        await self.loop.sock_sendall(self.sock, msgpack.packb(args))
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        logger.debug('Worker shutdown requested')
+        while self.worker.is_alive():
+            self.worker.terminate()
+            self.worker.join(1)
+        logger.debug('Worker shutdown complete')
+
+
+class MessageSinkWorker(Process):
+    def __init__(self, spool, message_class, group_prefix, sock, *args, **kwargs):
+        super(MessageSinkWorker, self).__init__(*args, **kwargs)
+        self.spool = spool
+        self.message_class = message_class
+        self.group_prefix = group_prefix
+        self.sock = sock
+        self.events = defaultdict(list)
+        self.account = '000000000000'
+
+        try:
+            client = spool.session.client('sts', config=spool.config)
+            self.account = client.get_caller_identity()['Account']
+        except Exception:
+            logger.warn('Unable to determine AWS Account ID; using default value.', exc_info=True)
+
+    def run(self):
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        self.loop = get_event_loop()
+        self.loop.add_signal_handler(signal.SIGTERM, self.stop)
+        self.clear()
+        self.schedule_flush()
+        self.loop.add_reader(self.sock.fileno(), self.read)
+        logger.debug('Worker starting')
+        self.loop.run_forever()
+
+        logger.debug('Worker shutting down')
+        tasks = gather(*Task.all_tasks(loop=self.loop), loop=self.loop, return_exceptions=True)
+        tasks.add_done_callback(lambda f: self.loop.stop())
+        tasks.cancel()
+        while not tasks.done() and not self.loop.is_closed():
+            self.loop.run_forever()
+
+        raise SystemExit(0)
+
+    def stop(self):
+        self.loop.remove_reader(self.sock.fileno())
+        self.loop.stop()
         self.flush()
 
-    async def write(self, source, dest, message, timestamp):
-        self.messages[(source, dest)].append((message, timestamp))
+    def read(self):
+        args = msgpack.unpackb(self.sock.recv(constant.MAX_MESSAGE_LENGTH))
+        self.loop.call_soon(self.add_message, *args)
+
+    def add_message(self, source, dest, message, timestamp):
+        source = source.decode('utf-8', 'backslashreplace')
+        event = self.message_class.create_event(source, message, timestamp)
+        self.events[(source, dest)].append(event)
         self.size += len(message)
         self.count += 1
         if self.size > constant.FLUSH_SIZE:
-            await self.flush_async()
-        return len(message)
+            self.flush()
 
-    def clear(self):
-        self.size = 0
-        self.count = 0
-        self.messages = defaultdict(list)
-        self.flushed = time.time()
+    def schedule_flush(self):
+        self.loop.call_later(constant.TIMER_INTERVAL, self.flush_check)
 
-    async def flush_async(self):
-        with ProcessPoolExecutor(max_workers=1) as executor:
-            self.loop.run_in_executor(executor, self._spool_messages, self.spool, self.messages, self.size, self.message_class, self.account, self.group_prefix)
-        self.clear()
+    def flush_check(self):
+        age = self.loop.time() - self.flushed
+        logger.debug('flush check: messages={0} size={1} age={2}'.format(self.count, self.size, age))
+        if self.events and age >= constant.FLUSH_TIME:
+            self.loop.call_soon(self.flush)
+        self.schedule_flush()
 
     def flush(self):
-        self._spool_messages(self.spool, self.messages, self.size, self.message_class, self.account, self.group_prefix)
-        self.clear()
-
-    def _schedule_flush(self):
-        self.loop.call_later(constant.TIMER_INTERVAL, self._flush_timer)
-
-    def _flush_timer(self):
-        logger.debug('flush timer: messages={0} size={1} age={2}'.format(self.count, self.size, time.time() - self.flushed))
-        if self.messages and time.time() - self.flushed >= constant.FLUSH_TIME:
-            self.loop.create_task(self.flush_async())
-        self._schedule_flush()
-
-    @classmethod
-    def _spool_messages(cls, spool, messages, size, message_class, account, group_prefix):
-        for (source, dest), values in messages.items():
-            group = '{0}/{1}/{2}'.format(group_prefix, message_class.name, dest)
-            events = message_class.create_events(source, values)
-            record = cls._prepare_record(account, group, source, events)
-            compressed_record = cls._compress_record(record)
-            logger.debug('Events for {0} > {1} compressed from {2} to {3} bytes (with JSON framing)'.format(group, source, size, len(compressed_record)))
+        for (source, dest), events in self.events.items():
+            group = '{0}/{1}/{2}'.format(self.group_prefix, self.message_class.name, dest)
+            record = self._prepare_record(group, source, events)
+            compressed_record = self._compress_record(record)
+            logger.debug('Events for {0} > {1} compressed from {2} to {3} bytes (with JSON framing)'.format(group, source, self.size, len(compressed_record)))
 
             if len(compressed_record) > constant.MAX_RECORD_SIZE:
                 # This approach naievely hopes that splitting a record into even parts will put it
@@ -92,15 +125,22 @@ class MessageSink(object):
                 start = 0
                 size = int(len(record['logEvents']) / split_count)
                 while start < len(record['logEvents']):
-                    record_part = cls._prepare_record(account, group, source, record['logEvents'][start:start+size])
-                    compressed_record = cls._compress_record(record_part)
-                    spool.write(compressed_record)
+                    record_part = self._prepare_record(group, source, record['logEvents'][start:start+size])
+                    compressed_record = self._compress_record(record_part)
+                    logger.debug('Events[{0}:{1}] compressed to {2} bytes (with JSON framing)'.format(start, start+size, len(compressed_record)))
+                    self.spool.write(compressed_record)
                     start += size
             else:
-                spool.write(compressed_record)
+                self.spool.write(compressed_record)
+        self.clear()
 
-    @classmethod
-    def _prepare_record(cls, owner, group, stream, events, filters=[], type='DATA_MESSAGE'):
+    def clear(self):
+        self.size = 0
+        self.count = 0
+        self.events.clear()
+        self.flushed = self.loop.time()
+
+    def _prepare_record(self, group, stream, events, filters=[], type='DATA_MESSAGE'):
         if not isinstance(filters, list):
             filters = [filters]
 
@@ -108,7 +148,7 @@ class MessageSink(object):
             filters = [group]
 
         return {
-            'owner': owner,
+            'owner': self.account,
             'logGroup': group,
             'logStream': stream,
             'subscriptionFilters': filters,

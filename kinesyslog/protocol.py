@@ -1,9 +1,9 @@
 import gzip
 import logging
+import time
 import zlib
 from asyncio import ensure_future, get_event_loop
 from asyncio.sslproto import SSLProtocol
-from datetime import datetime
 
 from . import constant
 from .gelf import ChunkedMessage
@@ -87,7 +87,7 @@ class BaseLoggingProtocol(object):
 
     async def _write(self, addr, message):
         addr = addr or self._transport.get_extra_info('peername')
-        await self._sink.write(addr[0], self._sockname[1], bytes(message), datetime.now())
+        await self._sink.write(addr[0], self._sockname[1], bytes(message), time.time())
 
     async def _process_data(self, data, addr=None):
         raise NotImplementedError
