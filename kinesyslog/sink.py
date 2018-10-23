@@ -24,14 +24,14 @@ class MessageSink(object):
         wsock.setblocking(False)
         wsock.setblocking(False)
 
-        self.stats = defaultdict(lambda: defaultdict(lambda: dict(bytes=0, count=0)))
+        self.stats = defaultdict(lambda: defaultdict(lambda: dict(messages=0, bytes=0)))
         self.loop = get_event_loop()
         self.sock = wsock
         self.worker = MessageSinkWorker(spool, message_class, group_prefix, rsock, daemon=True)
         self.worker.start()
 
     async def write(self, source, dest, message, timestamp):
-        self.stats[dest][source]['count'] += 1
+        self.stats[dest][source]['messages'] += 1
         self.stats[dest][source]['bytes'] += len(message)
         await self.loop.sock_sendall(self.sock, msgpack.packb([source, dest, message, timestamp]))
 

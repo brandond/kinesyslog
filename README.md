@@ -12,11 +12,9 @@ This module requires Python 3.5 or better, due to its use of the ``asyncio`` fra
 
 This module will make use of [python-libuuid](https://pypi.org/project/python-libuuid/) for fast UUID generation, if it is available.
 
-This module uses Boto3 to make API calls against the Kinesis Firehose service. You
-should have a working AWS API environment (~/.aws/credentials,
-environment variables, or EC2 IAM Role) that allows calling Kinesis Firehose's
-``put-record-batch`` method against the account that it is running in, and the stream
-specified on the command line.
+This module uses Boto3 to make API calls against the Kinesis Firehose service. You should have a working AWS API 
+environment (~/.aws/credentials, environment variables, or EC2 IAM Role) that allows calling Kinesis Firehose's
+``put-record-batch`` method against the account the specified stream.
 
 Usage
 -----
@@ -122,11 +120,51 @@ When delivered to S3, the objects will contain multiple concatenated GZip-compre
 Data Flow
 ---------
 
-Syslog events are received via UDP, TCP, or TLS and stored in an in-memory buffer on the main listener process. When this buffer reaches a preset threshold of size (4 MB) or message age (60 seconds), the message buffer is handed off to a background worker for processing, and a new buffer allocated. 4MB has been found to frequently compress down to near 1000 KB, which is the maximum record size for Kinesis Firehose.
+Syslog events are received via UDP, TCP, or TLS and stored in an in-memory buffer on the main listener process.
+When a message boundary is found, the reassembled message is immediately handed off to a background worker process
+via Unix datagram socket, freeing the main process to continue accepting messages.
 
-The background worker process extracts event timestamps, assigns events a unique ID, and serializes the resulting events into a JSON document that is GZip-compressed and written to a spool file, which will comprise a single Firehose record. The buffer will be split into multiple records (along message boundaries) if its compressed size exceeds the maximum Firehose record size. Every 60 seconds, all pending records are flushed to Firehose in batches that do not exceed 4 MB or 500 records. Spooled records are removed only when Firehose acknowledges successful upload by assigning a Record ID.
+The background worker extracts event timestamps, assigns events a unique ID, and stores them into a buffer. When
+this buffer reaches a preset threshold of size (4 MB) or message age (60 seconds), the messages are serialized into
+a GZip-compressed JSON data structure, which is written out to the on-disk message spool. 4MB has been found to frequently
+compress down to near 1000 KB, which is the maximum record size for Kinesis Firehose. Buffers will be split into multiple
+records (along message boundaries) if the compressed size exceeds the maximum Firehose record size.
+
+Every 60 seconds, another background worker flushes spooled records to Firehose in batches that do not exceed 4 MB or 500
+records. Spooled records are removed from disk only when Firehose acknowledges successful upload by assigning a Record ID.
+
+
+Monitoring
+----------
+
+All listeners will respond to HTTP requests with a simple '200 OK' response. This makes it easy to monitor system availability
+with a remote health check.
+
+The '/stats' endpoint may also be queried, and will return a JSON data structure containing per-listner and per-host statistics.
+
+**Sample Stats Request**
+```
+> GET /stats HTTP/1.1
+> User-Agent: curl/7.29.0
+> Host: 127.0.0.1:514
+> Accept: */*
+>
+< HTTP/1.1 200 OK
+< Server: kinesyslog/1.1.0
+< Connection: close
+< Content-type: application/json
+<
+{
+  "514":{
+    "127.0.0.1":{
+      "bytes":144,
+      "messages":4
+    }
+  }
+}
+```
 
 Todo
 ----
 
-* Client certificate validation
+* Client certificate validation?
