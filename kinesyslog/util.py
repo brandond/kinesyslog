@@ -3,10 +3,13 @@ import logging
 import boto3
 import botocore.exceptions
 import botocore.utils
+from pkg_resources import get_distribution
 
 import ujson
 
 logger = logging.getLogger(__name__)
+pkgname = __name__.split('.')[0]
+version = get_distribution(pkgname).version
 
 
 def get_instance_region():
@@ -27,3 +30,12 @@ def get_region(region_name=None, profile_name=None):
     if not region:
         raise botocore.exceptions.NoRegionError
     return region
+
+
+def send_http_ok(transport):
+    transport.write('HTTP/1.1 200 OK\r\nServer: {}/{}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'.format(pkgname, version).encode())
+
+
+def send_http_stats(transport, stats):
+    transport.write('HTTP/1.1 200 OK\r\nServer: {}/{}\r\nConnection: close\r\nContent-type: application/json\r\n\r\n'.format(pkgname, version).encode())
+    transport.write(ujson.dumps(stats, transport, escape_forward_slashes=False, indent=2).encode())

@@ -7,6 +7,7 @@ from asyncio.sslproto import SSLProtocol
 
 from . import constant
 from .gelf import ChunkedMessage
+from .util import send_http_ok, send_http_stats
 
 logger = logging.getLogger(__name__)
 
@@ -59,18 +60,22 @@ class BaseLoggingProtocol(object):
     def _close_with_error(self, message=None):
         if message:
             logger.error(message)
-        if self._buffer:
-            self._buffer.clear()
         if self._transport:
             self._transport.close()
+        if self._buffer:
+            self._buffer.clear()
 
     def _close_with_http(self):
+        if self._transport:
+            if self._buffer[:len(constant.GET_STATS)].upper() == constant.GET_STATS:
+                logger.debug('Sending HTTP response with stats and closing connection')
+                send_http_stats(self._transport, self._sink.stats)
+            else:
+                logger.debug('Sending HTTP response and closing connection')
+                send_http_ok(self._transport)
+            self._transport.close()
         if self._buffer:
             self._buffer.clear()
-        if self._transport:
-            logger.debug('Sending HTTP response and closing connection')
-            self._transport.write(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
-            self._transport.close()
 
     def _get_non_transparent_framed_message(self):
         """

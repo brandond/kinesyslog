@@ -1,17 +1,16 @@
 import logging
 import os
 import signal
+from asyncio import Task, gather, get_event_loop
 from glob import glob
-
-from asyncio import get_event_loop, gather, Task
 from multiprocessing import Process
 from tempfile import NamedTemporaryFile
 
 from boto3 import Session
 from botocore.config import Config
 
-from .util import get_region
 from . import constant
+from .util import get_region
 
 logger = logging.getLogger(__name__)
 

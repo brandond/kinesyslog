@@ -1,14 +1,14 @@
 import logging
 import math
-import socket
 import signal
-from asyncio import get_event_loop, gather, Task
+import socket
+from asyncio import Task, gather, get_event_loop
 from collections import defaultdict
-from multiprocessing import Process
 from gzip import compress
-
+from multiprocessing import Process
 
 import msgpack
+
 import ujson
 
 from . import constant
@@ -24,13 +24,16 @@ class MessageSink(object):
         wsock.setblocking(False)
         wsock.setblocking(False)
 
+        self.stats = defaultdict(lambda: defaultdict(lambda: dict(bytes=0, count=0)))
         self.loop = get_event_loop()
         self.sock = wsock
         self.worker = MessageSinkWorker(spool, message_class, group_prefix, rsock, daemon=True)
         self.worker.start()
 
-    async def write(self, *args):
-        await self.loop.sock_sendall(self.sock, msgpack.packb(args))
+    async def write(self, source, dest, message, timestamp):
+        self.stats[dest][source]['count'] += 1
+        self.stats[dest][source]['bytes'] += len(message)
+        await self.loop.sock_sendall(self.sock, msgpack.packb([source, dest, message, timestamp]))
 
     def __enter__(self):
         return self
