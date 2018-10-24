@@ -1,6 +1,7 @@
 from struct import Struct
 
 MAX_MESSAGE_LENGTH = 1024 * 16  # Maximum supported message length
+MAX_MESSAGE_BUFFER = MAX_MESSAGE_LENGTH * 16  # Maximum RX buffer size
 DIGITS = bytearray(i for i in range(0x30, 0x3A))  # First char of octet-counted syslog message
 TERMS = bytearray([0x00, 0x0A, 0x0D])  # Framed message terminators
 METHODS = bytearray([0x47, 0x48])  # First char of common HTTP methods

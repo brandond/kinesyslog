@@ -2,7 +2,7 @@ import gzip
 import logging
 import time
 import zlib
-from asyncio import ensure_future, get_event_loop
+from asyncio import CancelledError
 from asyncio.sslproto import SSLProtocol
 
 from . import constant
@@ -18,15 +18,17 @@ class DefaultProtocol(object):
 
 
 class BaseLoggingProtocol(object):
-    __slots__ = ['_sink', '_length', '_buffer', '_transport', '_sockname']
+    __slots__ = ['_sink', '_length', '_buffer', '_transport', '_sockname', '_paused']
     PROTOCOL = DefaultProtocol
 
-    def __init__(self, sink):
+    def __init__(self, sink, loop):
         self._sink = sink
+        self._loop = loop
         self._length = 0
         self._buffer = bytearray()
         self._transport = None
-        self._sockname = None
+        self._sockname = [b'0.0.0.0', 0]
+        self._paused = False
 
     def connection_made(self, transport):
         self._sockname = transport.get_extra_info('sockname')
@@ -36,7 +38,12 @@ class BaseLoggingProtocol(object):
             self._transport = transport
 
     def data_received(self, data, addr=None):
-        ensure_future(self._process_data(data, addr))
+        if self._transport and self._transport.is_closing():
+            return
+
+        if self._loop.is_running():
+            task = self._loop.create_task(self._feed_data(data, addr))
+            task.add_done_callback(self._feed_done)
 
     def datagram_received(self, data, addr):
         # Append terminator to simplify parsing
@@ -46,7 +53,7 @@ class BaseLoggingProtocol(object):
         pass
 
     def error_received(self, exc):
-        self._close_with_error('Protocol error: {0}'.format(exc))
+        self._close_with_error('Protocol error on {0}: {1}'.format(self._sockname[1], exc))
 
     def connection_lost(self, exc):
         pass
@@ -56,6 +63,14 @@ class BaseLoggingProtocol(object):
 
     def resume_writing(self):
         pass
+
+    def _feed_done(self, task):
+        try:
+            task.result()
+        except CancelledError:
+            pass
+        except Exception as e:
+            self._close_with_error('Error processing buffer on {0}: {1}'.format(self._sockname[1], e))
 
     def _close_with_error(self, message=None):
         if message:
@@ -68,10 +83,8 @@ class BaseLoggingProtocol(object):
     def _close_with_http(self):
         if self._transport:
             if self._buffer[:len(constant.GET_STATS)].upper() == constant.GET_STATS:
-                logger.debug('Sending HTTP response with stats and closing connection')
                 send_http_stats(self._transport, self._sink.stats)
             else:
-                logger.debug('Sending HTTP response and closing connection')
                 send_http_ok(self._transport)
             self._transport.close()
         if self._buffer:
@@ -94,16 +107,28 @@ class BaseLoggingProtocol(object):
         addr = addr or self._transport.get_extra_info('peername')
         await self._sink.write(addr[0], self._sockname[1], bytes(message), time.time())
 
-    async def _process_data(self, data, addr=None):
+    async def _feed_data(self, data, addr=None):
+        self._buffer.extend(data)
+
+        if len(self._buffer) > constant.MAX_MESSAGE_BUFFER and self._transport:
+            self._paused = True
+            self._transport.pause_reading()
+
+        await self._process_data(addr)
+
+        if self._paused and self._transport:
+            self._paused = False
+            self._transport.resume_reading()
+
+    async def _process_data(self, addr=None):
         raise NotImplementedError
 
 
 class BaseSecureLoggingProtocol(SSLProtocol):
-    def __init__(self, sslcontext, *args, **kwargs):
-        loop = get_event_loop()
+    def __init__(self, sslcontext, loop, *args, **kwargs):
         super(BaseSecureLoggingProtocol, self).__init__(
             loop=loop,
-            app_protocol=self.PROTOCOL(*args, **kwargs),
+            app_protocol=self.PROTOCOL(loop=loop, *args, **kwargs),
             sslcontext=sslcontext,
             waiter=None,
             server_side=True
@@ -111,11 +136,7 @@ class BaseSecureLoggingProtocol(SSLProtocol):
 
 
 class SyslogProtocol(BaseLoggingProtocol):
-    async def _process_data(self, data, addr=None):
-        if self._transport and self._transport.is_closing():
-            return
-
-        self._buffer.extend(data)
+    async def _process_data(self, addr=None):
         while self._buffer:
             message = None
 
@@ -165,11 +186,7 @@ class SyslogProtocol(BaseLoggingProtocol):
 
 
 class GelfProtocol(BaseLoggingProtocol):
-    async def _process_data(self, data, addr=None):
-        if self._transport and self._transport.is_closing():
-            return
-
-        self._buffer.extend(data)
+    async def _process_data(self, addr=None):
         while self._buffer:
             message = None
 

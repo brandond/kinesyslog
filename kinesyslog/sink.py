@@ -2,7 +2,7 @@ import logging
 import math
 import signal
 import socket
-from asyncio import Task, gather, get_event_loop
+from asyncio import Lock, Task, gather, get_event_loop
 from collections import defaultdict
 from gzip import compress
 from multiprocessing import Process
@@ -19,11 +19,12 @@ logger = logging.getLogger(__name__)
 class MessageSink(object):
     def __init__(self, spool, message_class, group_prefix):
         (rsock, wsock) = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
-        rsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_LENGTH)
-        wsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_LENGTH)
+        rsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_LENGTH * 8)
+        wsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_LENGTH * 8)
         wsock.setblocking(False)
         wsock.setblocking(False)
 
+        self._lock = Lock()
         self.stats = defaultdict(lambda: defaultdict(lambda: dict(messages=0, bytes=0)))
         self.loop = get_event_loop()
         self.sock = wsock
@@ -31,9 +32,10 @@ class MessageSink(object):
         self.worker.start()
 
     async def write(self, source, dest, message, timestamp):
-        self.stats[dest][source]['messages'] += 1
-        self.stats[dest][source]['bytes'] += len(message)
-        await self.loop.sock_sendall(self.sock, msgpack.packb([source, dest, message, timestamp]))
+        async with self._lock:
+            self.stats[dest][source]['messages'] += 1
+            self.stats[dest][source]['bytes'] += len(message)
+            await self.loop.sock_sendall(self.sock, msgpack.packb([source, dest, message, timestamp]))
 
     def __enter__(self):
         return self

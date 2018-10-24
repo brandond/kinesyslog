@@ -1,6 +1,5 @@
 import logging
 import ssl
-from asyncio import get_event_loop
 
 from .protocol import (DatagramGelfProtocol, DatagramSyslogProtocol,
                        DefaultProtocol, GelfProtocol, SecureGelfProtocol,
@@ -10,21 +9,29 @@ logger = logging.getLogger(__name__)
 
 
 class BaseServer(object):
-    __slots__ = ['_host', '_port', '_loop', '_args']
+    __slots__ = ['_host', '_port', '_args', '_server']
     PROTOCOL = DefaultProtocol
 
     def __init__(self, host, port):
         logger.info('Starting {0} on {1}:{2}'.format(self.__class__.__name__, host, port))
         self._host = host
         self._port = port
-        self._loop = get_event_loop()
         self._args = {}
 
-    def _protocol_factory(self, sink):
-        return lambda: self.PROTOCOL(sink=sink, **self._args)
+    def _protocol_factory(self, sink, loop):
+        return lambda: self.PROTOCOL(sink=sink, loop=loop, **self._args)
 
-    async def start_server(self, sink):
-        return await self._loop.create_server(self._protocol_factory(sink), self._host, self._port)
+    async def start(self, sink, loop):
+        self._server = await loop.create_server(self._protocol_factory(sink, loop), self._host, self._port)
+        return self._server
+
+    async def stop(self):
+        server = self._server
+        if server is None:
+            return
+        self._server = None
+        server.close()
+        return await server.wait_closed()
 
 
 class SecureServer(BaseServer):
@@ -37,8 +44,8 @@ class SecureServer(BaseServer):
 
 
 class DatagramServer(BaseServer):
-    async def start_server(self, sink):
-        return await self._loop.create_datagram_endpoint(self._protocol_factory(sink), local_addr=(self._host, self._port))
+    async def create_server(self, sink, loop):
+        return await loop.create_datagram_endpoint(self._protocol_factory(sink, loop), local_addr=(self._host, self._port))
 
 
 class SyslogServer(BaseServer):

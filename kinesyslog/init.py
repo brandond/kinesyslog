@@ -177,7 +177,7 @@ def listen(**kwargs):
             e.__traceback__.tb_next.tb_frame.f_code.co_names[1], e))
 
     if not servers:
-        logger.error('No valid servers configured! You must enable at least one UDP, TCP, or TLS port.')
+        logger.error('No valid servers configured -  you must enable at least one UDP, TCP, or TLS port')
         sys.exit(posix.EX_CONFIG)
 
     try:
@@ -186,18 +186,22 @@ def listen(**kwargs):
             with MessageSink(spool=spool, message_class=message_class, group_prefix=kwargs['group_prefix']) as sink:
                 for server in servers[:]:
                     try:
-                        loop.run_until_complete(server.start_server(sink=sink))
+                        loop.run_until_complete(server.start(sink=sink, loop=loop))
                     except Exception as e:
                         logger.error('Failed to start {}: {}'.format(server.__class__.__name__, e))
                         servers.remove(server)
                 if servers:
-                    logger.info('Successfully started {} listeners'.format(len(servers)))
-                    loop.add_signal_handler(signal.SIGTERM, lambda: loop.stop())
-                    loop.run_forever()
+                    try:
+                        logger.info('Successfully started {} servers'.format(len(servers)))
+                        loop.add_signal_handler(signal.SIGTERM, lambda: loop.stop())
+                        loop.run_forever()
+                    except KeyboardInterrupt:
+                        pass
+                    logger.info('Shutting down servers')
+                    for server in servers:
+                        loop.run_until_complete(server.stop())
                 else:
-                    raise Exception('All servers failed.')
-    except KeyboardInterrupt:
-        pass
+                    raise Exception('All servers failed')
     except Exception as e:
         logger.error('Failed to start Kinesyslog: {0}'.format(e))
         if isinstance(e, PermissionError):
