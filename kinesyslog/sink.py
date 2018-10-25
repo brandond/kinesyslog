@@ -21,7 +21,7 @@ class MessageSink(object):
         (rsock, wsock) = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
         rsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_LENGTH * 8)
         wsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_LENGTH * 8)
-        wsock.setblocking(False)
+        rsock.setblocking(False)
         wsock.setblocking(False)
 
         self._lock = Lock()
