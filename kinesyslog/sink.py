@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 class MessageSink(object):
     def __init__(self, spool, message_class, group_prefix):
-        (rsock, wsock) = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
-        rsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_LENGTH * 8)
-        wsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_LENGTH * 8)
+        (rsock, wsock) = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        rsock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, constant.MAX_MESSAGE_BUFFER)
+        wsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_BUFFER)
         rsock.setblocking(False)
         wsock.setblocking(False)
 

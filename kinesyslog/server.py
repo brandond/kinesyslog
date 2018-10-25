@@ -22,7 +22,12 @@ class BaseServer(object):
         return lambda: self.PROTOCOL(sink=sink, loop=loop, **self._args)
 
     async def start(self, sink, loop):
-        self._server = await loop.create_server(self._protocol_factory(sink, loop), self._host, self._port)
+        self._server = await loop.create_server(
+            protocol_factory=self._protocol_factory(sink, loop),
+            host=self._host,
+            port=self._port,
+            reuse_address=True,
+            reuse_port=True)
         return self._server
 
     async def stop(self):
@@ -44,8 +49,13 @@ class SecureServer(BaseServer):
 
 
 class DatagramServer(BaseServer):
-    async def create_server(self, sink, loop):
-        return await loop.create_datagram_endpoint(self._protocol_factory(sink, loop), local_addr=(self._host, self._port))
+    async def start(self, sink, loop):
+        self._server = await loop.create_datagram_endpoint(
+            protocol_factory=self._protocol_factory(sink, loop),
+            local_addr=(self._host, self._port),
+            reuse_address=True,
+            reuse_port=True)
+        return self._server
 
 
 class SyslogServer(BaseServer):
