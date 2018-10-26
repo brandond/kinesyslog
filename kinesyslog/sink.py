@@ -32,10 +32,17 @@ class MessageSink(object):
         self.worker.start()
 
     async def write(self, source, dest, message, timestamp):
+        length = len(message)
+        if length > constant.MAX_MESSAGE_LEN:
+            logger.warning('Truncating {} byte message'.format(length))
+            message = message[:constant.MAX_MESSAGE_LEN]
+            length = constant.MAX_MESSAGE_LEN
+
         async with self._lock:
-            self.stats[dest][source]['messages'] += 1
-            self.stats[dest][source]['bytes'] += len(message)
             await self.loop.sock_sendall(self.sock, msgpack.packb([source, dest, message, timestamp]))
+
+        self.stats[dest][source]['messages'] += 1
+        self.stats[dest][source]['bytes'] += length
 
     def __enter__(self):
         return self
