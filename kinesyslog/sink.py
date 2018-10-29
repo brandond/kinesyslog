@@ -8,6 +8,7 @@ from gzip import compress
 from multiprocessing import Process
 
 import msgpack
+from msgpack.exceptions import UnpackValueError
 
 import ujson
 
@@ -24,7 +25,8 @@ class MessageSink(object):
         rsock.setblocking(False)
         wsock.setblocking(False)
 
-        self._lock = Lock()
+        self.packer = msgpack.Packer()
+        self.lock = Lock()
         self.stats = defaultdict(lambda: defaultdict(lambda: dict(messages=0, bytes=0)))
         self.loop = get_event_loop()
         self.sock = wsock
@@ -38,8 +40,8 @@ class MessageSink(object):
             message = message[:constant.MAX_MESSAGE_LENGTH]
             length = constant.MAX_MESSAGE_LENGTH
 
-        async with self._lock:
-            await self.loop.sock_sendall(self.sock, msgpack.packb([source, dest, message, timestamp]))
+        async with self.lock:
+            await self.loop.sock_sendall(self.sock, self.packer.pack([source, dest, message, timestamp]))
 
         self.stats[dest][source]['messages'] += 1
         self.stats[dest][source]['bytes'] += length
@@ -96,8 +98,11 @@ class MessageSinkWorker(Process):
         self.flush()
 
     def read(self):
-        args = msgpack.unpackb(self.sock.recv(constant.MAX_MESSAGE_LENGTH))
-        self.loop.call_soon(self.add_message, *args)
+        try:
+            args = msgpack.unpackb(self.sock.recv(constant.MAX_MESSAGE_BUFFER))
+            self.loop.call_soon(self.add_message, *args)
+        except UnpackValueError:
+            logger.warn('Failed to unpack message', exc_info=True)
 
     def add_message(self, source, dest, message, timestamp):
         source = source.decode('utf-8', 'backslashreplace')
