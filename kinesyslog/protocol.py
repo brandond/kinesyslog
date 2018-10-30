@@ -116,9 +116,12 @@ class BaseLoggingProtocol(object):
 
         await self._process_data(addr)
 
-        if len(self._buffer) < constant.MAX_MESSAGE_BUFFER and self._paused and self._transport:
-            self._paused = False
-            self._transport.resume_reading()
+        if self._paused and self._transport:
+            if len(self._buffer) < constant.MAX_MESSAGE_BUFFER:
+                self._paused = False
+                self._transport.resume_reading()
+            else:
+                self._close_with_error('Maximum buffer length exceeded without finding valid message')
 
     async def _process_data(self, addr=None):
         raise NotImplementedError
