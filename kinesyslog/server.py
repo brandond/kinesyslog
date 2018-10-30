@@ -1,6 +1,7 @@
 import logging
 import ssl
 
+from asyncio.base_events import Server
 from .protocol import (DatagramGelfProtocol, DatagramSyslogProtocol,
                        DefaultProtocol, GelfProtocol, SecureGelfProtocol,
                        SecureSyslogProtocol, SyslogProtocol)
@@ -50,11 +51,12 @@ class SecureServer(BaseServer):
 
 class DatagramServer(BaseServer):
     async def start(self, sink, loop):
-        self._server = await loop.create_datagram_endpoint(
+        transport, protocol = await loop.create_datagram_endpoint(
             protocol_factory=self._protocol_factory(sink, loop),
             local_addr=(self._host, self._port),
             reuse_address=True,
             reuse_port=True)
+        self._server = Server(loop, [transport._sock])
         return self._server
 
 

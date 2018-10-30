@@ -18,13 +18,14 @@ class DefaultProtocol(object):
 
 
 class BaseLoggingProtocol(object):
-    __slots__ = ['_sink', '_length', '_buffer', '_transport', '_sockname', '_paused']
+    __slots__ = ['_sink', '_length', '_discard', '_buffer', '_transport', '_sockname', '_paused']
     PROTOCOL = DefaultProtocol
 
     def __init__(self, sink, loop):
         self._sink = sink
         self._loop = loop
         self._length = 0
+        self._discard = 0
         self._buffer = bytearray()
         self._transport = None
         self._sockname = [b'0.0.0.0', 0]
@@ -38,9 +39,6 @@ class BaseLoggingProtocol(object):
             self._transport = transport
 
     def data_received(self, data, addr=None):
-        if self._transport and self._transport.is_closing():
-            return
-
         if self._loop.is_running():
             task = self._loop.create_task(self._feed_data(data, addr))
             task.add_done_callback(self._feed_done)
@@ -53,10 +51,10 @@ class BaseLoggingProtocol(object):
         pass
 
     def error_received(self, exc):
-        self._close_with_error('Protocol error on {0}: {1}'.format(self._sockname[1], exc))
+        self._close_with_error('Protocol error on {0}'.format(self._sockname[1]), exc)
 
     def connection_lost(self, exc):
-        pass
+        self.data_received(b'')
 
     def pause_writing(self):
         pass
@@ -70,11 +68,11 @@ class BaseLoggingProtocol(object):
         except CancelledError:
             pass
         except Exception as e:
-            self._close_with_error('Error processing buffer on {0}: {1}'.format(self._sockname[1], e))
+            self._close_with_error('Error processing buffer on {0}'.format(self._sockname[1]), e)
 
-    def _close_with_error(self, message=None):
+    def _close_with_error(self, message=None, exception=None):
         if message:
-            logger.error(message)
+            logger.error('Closing connection: {}'.format(message), exc_info=exception)
         if self._transport:
             self._transport.close()
         if self._buffer:
@@ -102,6 +100,8 @@ class BaseLoggingProtocol(object):
                     message = message[:constant.MAX_MESSAGE_LENGTH]
                 self._buffer = remainder
                 return message
+            elif len(self._buffer) > constant.MAX_MESSAGE_LENGTH:
+                self._close_with_error('Maximum message length exceeded without finding terminating trailer character')
 
     async def _write(self, addr, message):
         addr = addr or self._transport.get_extra_info('peername')
@@ -110,13 +110,13 @@ class BaseLoggingProtocol(object):
     async def _feed_data(self, data, addr=None):
         self._buffer.extend(data)
 
-        if len(self._buffer) > constant.MAX_MESSAGE_BUFFER and self._transport:
+        if len(self._buffer) >= constant.MAX_MESSAGE_BUFFER and self._transport:
             self._paused = True
             self._transport.pause_reading()
 
         await self._process_data(addr)
 
-        if self._paused and self._transport:
+        if len(self._buffer) < constant.MAX_MESSAGE_BUFFER and self._paused and self._transport:
             self._paused = False
             self._transport.resume_reading()
 
@@ -140,7 +140,11 @@ class SyslogProtocol(BaseLoggingProtocol):
         while self._buffer:
             message = None
 
-            if self._length or self._buffer[0] in constant.DIGITS:
+            if self._length:
+                message = self._get_octet_counted_message()
+            elif self._discard:
+                self._discard_excess_bytes()
+            elif self._buffer[0] in constant.DIGITS:
                 message = self._get_octet_counted_message()
             elif self._buffer[0] in constant.TERMS:
                 del self._buffer[0]
@@ -153,6 +157,14 @@ class SyslogProtocol(BaseLoggingProtocol):
                 await self._write(addr, message)
             else:
                 return
+
+    def _discard_excess_bytes(self):
+        """
+        Discard excess bytes from overlength message
+        """
+        discard_len = min(self._discard, len(self._buffer))
+        del self._buffer[:discard_len]
+        self._discard -= discard_len
 
     def _get_octet_counted_message(self):
         """
@@ -167,14 +179,16 @@ class SyslogProtocol(BaseLoggingProtocol):
             if sep:
                 try:
                     self._length = int(length)
-                    if self._length < 0 or self._length > constant.MAX_MESSAGE_LENGTH:
-                        raise ValueError
                     self._buffer = remainder
                 except ValueError:
-                    # Handle as random chunk of log noncompliant message that happens to start with numbers
-                    return self._buffer
+                    # Handle as random chunk of log noncompliant message that happens to start with a digit
+                    return self._get_non_transparent_framed_message()
             else:
                 return
+
+        if self._length > constant.MAX_MESSAGE_LENGTH:
+            self._discard = self._length - constant.MAX_MESSAGE_LENGTH
+            self._length = constant.MAX_MESSAGE_LENGTH
 
         if len(self._buffer) >= self._length:
             message = self._buffer[:self._length]
