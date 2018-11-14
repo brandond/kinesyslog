@@ -2,6 +2,7 @@ import logging
 import os
 import signal
 from asyncio import Task, gather, get_event_loop
+from threading import Lock
 from glob import glob
 from multiprocessing import Process
 from tempfile import NamedTemporaryFile
@@ -58,6 +59,7 @@ class EventSpoolWorker(Process):
         self.spool_dir = spool_dir
         self.session = session
         self.config = config
+        self.lock = Lock()
         self.flushed = 0
 
     def run(self):
@@ -85,23 +87,26 @@ class EventSpoolWorker(Process):
         self.loop.call_later(constant.TIMER_INTERVAL, self.flush_check)
 
     def flush_check(self):
-        age = self.loop.time() - self.flushed
-        batch_files = len(glob(os.path.join(self.spool_dir, constant.SPOOL_PREFIX) + '*'))
+        if not self.lock.locked():
+            age = self.loop.time() - self.flushed
+            batch_files = len(glob(os.path.join(self.spool_dir, constant.SPOOL_PREFIX) + '*'))
 
-        logger.debug('flush check: files={0} age={1}'.format(batch_files, age))
-        if batch_files >= constant.MAX_RECORD_COUNT or age >= constant.FLUSH_TIME:
-            self.loop.call_soon(self.flush)
+            logger.debug('flush check: files={0} age={1}'.format(batch_files, age))
+            if batch_files >= constant.MAX_RECORD_COUNT or age >= constant.FLUSH_TIME:
+                self.loop.call_soon(self.flush)
+
         self.schedule_flush()
 
     def flush(self):
-        try:
+        with self.lock:
+            record_files = glob(os.path.join(self.spool_dir, constant.SPOOL_PREFIX) + '*')
             while True:
-                record_files = glob(os.path.join(self.spool_dir, constant.SPOOL_PREFIX) + '*')
                 batch_kwargs = {'DeliveryStreamName': self.delivery_stream, 'Records': []}
                 batch_size = 0
                 batch_files = []
 
-                for path in record_files:
+                while record_files:
+                    path = record_files.pop()
                     file_size = os.path.getsize(path)
                     if batch_size + file_size <= constant.FLUSH_SIZE and len(batch_files) < constant.MAX_RECORD_COUNT:
                         logger.debug('Including {0} ({1} bytes) in batch'.format(path, file_size))
@@ -138,6 +143,5 @@ class EventSpoolWorker(Process):
                             logger.warning('Firehose record failed: [{ErrorCode}] {ErrorMessage}'.format(**status))
                 else:
                     logger.debug('Batch is empty')
+                    self.flushed = self.loop.time()
                     return
-        finally:
-            self.flushed = self.loop.time()
