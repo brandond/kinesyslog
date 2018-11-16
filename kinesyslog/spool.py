@@ -107,7 +107,12 @@ class EventSpoolWorker(Process):
 
                 while record_files:
                     path = record_files.pop()
-                    file_size = os.path.getsize(path)
+                    try:
+                        file_size = os.path.getsize(path)
+                    except Exception as e:
+                        logger.warn('Failed to get size of file {0} from spool: {1}'.format(path, e))
+                        continue
+
                     if batch_size + file_size <= constant.FLUSH_SIZE and len(batch_files) < constant.MAX_RECORD_COUNT:
                         logger.debug('Including {0} ({1} bytes) in batch'.format(path, file_size))
                         batch_size += file_size
@@ -119,9 +124,9 @@ class EventSpoolWorker(Process):
                     try:
                         with open(batch_file, 'rb') as fh:
                             batch_kwargs['Records'].append({'Data': fh.read()})
-                    except Exception:
-                        logger.error('Failed to read file {0} from spool'.format(batch_file), exc_info=True)
-                        return
+                    except Exception as e:
+                        logger.warn('Failed to read file {0} from spool: {1}'.format(batch_file, e))
+                        break
 
                 if batch_kwargs['Records']:
                     logger.info('Batch has {0} bytes in {1} files'.format(batch_size, len(batch_files)))
@@ -137,10 +142,10 @@ class EventSpoolWorker(Process):
                             logger.debug('Firehose record succeeded: {0}'.format(batch_files[i]))
                             try:
                                 os.unlink(batch_files[i])
-                            except Exception:
-                                logger.error('Failed to unlink successfully processed record: {0}'.format(batch_files[i]))
+                            except Exception as e:
+                                logger.warn('Failed to unlink successfully processed file {0} from spool: {1}'.format(batch_files[i], e))
                         else:
-                            logger.warning('Firehose record failed: [{ErrorCode}] {ErrorMessage}'.format(**status))
+                            logger.warn('Firehose record failed: [{ErrorCode}] {ErrorMessage}'.format(**status))
                 else:
                     logger.debug('Batch is empty')
                     self.flushed = self.loop.time()

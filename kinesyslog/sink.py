@@ -36,7 +36,7 @@ class MessageSink(object):
     async def write(self, source, dest, message, timestamp):
         length = len(message)
         if length > constant.MAX_MESSAGE_LENGTH:
-            logger.warning('Truncating {} byte message'.format(length))
+            logger.warn('Truncating {} byte message'.format(length))
             message = message[:constant.MAX_MESSAGE_LENGTH]
             length = constant.MAX_MESSAGE_LENGTH
 
@@ -134,7 +134,7 @@ class MessageSinkWorker(Process):
                 # This approach naievely hopes that splitting a record into even parts will put it
                 # below the max record size. Further tuning may be required.
                 split_count = math.ceil(len(compressed_record) / constant.MAX_RECORD_SIZE)
-                logger.warning('Compressed record size of {0} bytes exceeds maximum Firehose record size of {1} bytes; splitting into {2} records'.format(
+                logger.warn('Compressed record size of {0} bytes exceeds maximum Firehose record size of {1} bytes; splitting into {2} records'.format(
                     len(compressed_record),
                     constant.MAX_RECORD_SIZE,
                     split_count
