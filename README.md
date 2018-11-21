@@ -10,7 +10,7 @@ Prerequisites
 
 This module requires Python 3.5 or better, due to its use of the ``asyncio`` framework.
 
-This module will make use of [python-libuuid](https://pypi.org/project/python-libuuid/) for fast UUID generation, if it is available.
+This module will make use of [libuuid](https://pypi.org/project/libuuid/) for fast UUID generation, if it is available.
 
 This module uses Boto3 to make API calls against the Kinesis Firehose service. You should have a working AWS API 
 environment (~/.aws/credentials, environment variables, or EC2 IAM Role) that allows calling Kinesis Firehose's
