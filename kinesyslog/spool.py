@@ -1,8 +1,8 @@
 import logging
 import os
 import signal
-from asyncio import Task, gather, get_event_loop
-from threading import Lock
+import asyncio
+import threading
 from glob import glob
 from multiprocessing import Process
 from tempfile import NamedTemporaryFile
@@ -10,8 +10,7 @@ from tempfile import NamedTemporaryFile
 from boto3 import Session
 from botocore.config import Config
 
-from . import constant
-from .util import get_region
+from . import constant, util
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +18,14 @@ logger = logging.getLogger(__name__)
 class EventSpool(object):
     def __init__(self, delivery_stream, spool_dir, region_name=None, profile_name=None):
         self.session = Session(profile_name=profile_name)
-        self.config = Config(retries={'max_attempts': 10}, region_name=get_region(region_name, profile_name))
+        self.config = Config(retries={'max_attempts': 10}, region_name=util.get_region(region_name, profile_name))
         self._validate_stream(self.session, self.config, delivery_stream)
 
         self.spool_dir = spool_dir
         self.worker = EventSpoolWorker(delivery_stream, self.spool_dir, self.session, self.config, daemon=True)
-        self.worker.start()
 
     def __enter__(self):
+        self.worker.start()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -59,19 +58,19 @@ class EventSpoolWorker(Process):
         self.spool_dir = spool_dir
         self.session = session
         self.config = config
-        self.lock = Lock()
+        self.lock = threading.Lock()
         self.flushed = 0
 
     def run(self):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        self.loop = get_event_loop()
+        self.loop = util.new_event_loop()
         self.loop.add_signal_handler(signal.SIGTERM, self.stop)
         self.schedule_flush()
         logger.debug('Worker starting')
         self.loop.run_forever()
 
         logger.debug('Worker shutting down')
-        tasks = gather(*Task.all_tasks(loop=self.loop), loop=self.loop, return_exceptions=True)
+        tasks = asyncio.gather(*asyncio.Task.all_tasks(loop=self.loop), loop=self.loop, return_exceptions=True)
         tasks.add_done_callback(lambda f: self.loop.stop())
         tasks.cancel()
         while not tasks.done() and not self.loop.is_closed():

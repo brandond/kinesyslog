@@ -36,7 +36,8 @@ Options:
   --profile TEXT            Use a specific profile from your credential file.
   --gelf                    Listen for messages in Graylog Extended Log Format (GELF) instead of Syslog.
   --group-prefix TEXT       Use the specified LogGroup prefix.  [default: /kinesyslog]
-  --debug                   Enable debug logging to STDERR.
+  --debug                   Enable debug logging.
+  --debug-asyncio           With --debug, enable debugging of asyncio. This significantly decreases performance.
   --help                    Show this message and exit.
 ```
 

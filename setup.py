@@ -37,7 +37,7 @@ setup(
             'setuptools-version-command',
         ],
         'libuuid': [
-            'python-libuuid',
+            'libuuid >= 1.0.0',
         ]
     },
     include_package_data=True,

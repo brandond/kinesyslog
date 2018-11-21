@@ -4,6 +4,7 @@ import posix
 import signal
 import sys
 from asyncio import CancelledError, Task, gather, get_event_loop
+from contextlib import ExitStack
 from pwd import getpwnam
 from tempfile import gettempdir
 from textwrap import dedent
@@ -27,9 +28,15 @@ def validate_user(ctx, param, value):
 
 
 @click.option(
+    '--debug-asyncio',
+    is_flag=True,
+    help='With --debug, enable debugging of asyncio. This significantly decreases performance.',
+    envvar='KINESYSLOG_DEBUG_ASYNCIO',
+)
+@click.option(
     '--debug',
     is_flag=True,
-    help='Enable debug logging to STDERR.',
+    help='Enable debug logging.',
     envvar='KINESYSLOG_DEBUG',
 )
 @click.option(
@@ -131,15 +138,17 @@ def validate_user(ctx, param, value):
 )
 @click.command(short_help='List for incoming Syslog messages and submit to Kinesis Firehose')
 def listen(**kwargs):
-    loop = get_event_loop()
-    loop.set_exception_handler(shutdown_exception_handler)
-
     if kwargs.get('debug', False):
         logging.getLogger('kinesyslog').setLevel('DEBUG')
         logging.getLogger('asyncio').setLevel('INFO')
-        loop.set_debug(True)
+        if kwargs.get('debug_asyncio', False):
+            logging.getLogger('asyncio').setLevel('DEBUG')
+            os.environ.set('PYTHONASYNCIODEBUG', '1')
     else:
         logging.getLogger('botocore').setLevel('ERROR')
+
+    loop = get_event_loop()
+    loop.set_exception_handler(shutdown_exception_handler)
 
     from . import proxy
     from .message import GelfMessage, SyslogMessage
@@ -183,10 +192,11 @@ def listen(**kwargs):
     try:
         with EventSpool(delivery_stream=kwargs['stream'], spool_dir=kwargs['spool_dir'],
                         region_name=kwargs['region'], profile_name=kwargs['profile']) as spool:
-            with MessageSink(spool=spool, message_class=message_class, group_prefix=kwargs['group_prefix']) as sink:
-                for server in servers[:]:
+            with ExitStack() as stack:
+                sinks = [stack.enter_context(MessageSink(spool=spool, message_class=message_class, group_prefix=kwargs['group_prefix'])) for s in servers]
+                for i, server in enumerate(servers):
                     try:
-                        loop.run_until_complete(server.start(sink=sink, loop=loop))
+                        loop.run_until_complete(server.start(sink=sinks[i], loop=loop))
                     except Exception as e:
                         logger.error('Failed to start {}: {}'.format(server.__class__.__name__, e))
                         servers.remove(server)

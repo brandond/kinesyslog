@@ -2,7 +2,7 @@ import logging
 import math
 import signal
 import socket
-from asyncio import Lock, Task, gather, get_event_loop
+import asyncio
 from collections import defaultdict
 from gzip import compress
 from multiprocessing import Process
@@ -12,9 +12,11 @@ from msgpack.exceptions import UnpackValueError
 
 import ujson
 
-from . import constant
+from . import constant, util
 
 logger = logging.getLogger(__name__)
+RSOCKS = list()
+WSOCKS = list()
 
 
 class MessageSink(object):
@@ -24,14 +26,15 @@ class MessageSink(object):
         wsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_BUFFER)
         rsock.setblocking(False)
         wsock.setblocking(False)
+        RSOCKS.append(rsock)
+        WSOCKS.append(wsock)
 
         self.packer = msgpack.Packer()
-        self.lock = Lock()
+        self.lock = asyncio.Lock()
         self.stats = defaultdict(lambda: defaultdict(lambda: dict(messages=0, bytes=0)))
-        self.loop = get_event_loop()
+        self.loop = asyncio.get_event_loop()
         self.sock = wsock
         self.worker = MessageSinkWorker(spool, message_class, group_prefix, rsock, daemon=True)
-        self.worker.start()
 
     async def write(self, source, dest, message, timestamp):
         length = len(message)
@@ -47,6 +50,8 @@ class MessageSink(object):
         self.stats[dest][source]['bytes'] += length
 
     def __enter__(self):
+        self.worker.start()
+        util.close_all_socks(RSOCKS)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -75,7 +80,8 @@ class MessageSinkWorker(Process):
 
     def run(self):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        self.loop = get_event_loop()
+        util.close_all_socks(WSOCKS)
+        self.loop = util.new_event_loop()
         self.loop.add_signal_handler(signal.SIGTERM, self.stop)
         self.clear()
         self.schedule_flush()
@@ -84,7 +90,7 @@ class MessageSinkWorker(Process):
         self.loop.run_forever()
 
         logger.debug('Worker shutting down')
-        tasks = gather(*Task.all_tasks(loop=self.loop), loop=self.loop, return_exceptions=True)
+        tasks = asyncio.gather(*asyncio.Task.all_tasks(loop=self.loop), loop=self.loop, return_exceptions=True)
         tasks.add_done_callback(lambda f: self.loop.stop())
         tasks.cancel()
         while not tasks.done() and not self.loop.is_closed():
@@ -101,6 +107,8 @@ class MessageSinkWorker(Process):
         try:
             args = msgpack.unpackb(self.sock.recv(constant.MAX_MESSAGE_BUFFER))
             self.loop.call_soon(self.add_message, *args)
+        except BlockingIOError:
+            pass
         except UnpackValueError:
             logger.warn('Failed to unpack message', exc_info=True)
 
@@ -126,7 +134,7 @@ class MessageSinkWorker(Process):
     def flush(self):
         for (source, dest), events in self.events.items():
             group = '{0}/{1}/{2}'.format(self.group_prefix, self.message_class.name, dest)
-            record = self._prepare_record(group, source, events)
+            record = self._prepare_record(self.account, group, source, events)
             compressed_record = self._compress_record(record)
             logger.debug('Events for {0} > {1} compressed from {2} to {3} bytes (with JSON framing)'.format(group, source, self.size, len(compressed_record)))
 
@@ -142,7 +150,7 @@ class MessageSinkWorker(Process):
                 start = 0
                 size = int(len(record['logEvents']) / split_count)
                 while start < len(record['logEvents']):
-                    record_part = self._prepare_record(group, source, record['logEvents'][start:start+size])
+                    record_part = self._prepare_record(self.account, group, source, record['logEvents'][start:start+size])
                     compressed_record = self._compress_record(record_part)
                     logger.debug('Events[{0}:{1}] compressed to {2} bytes (with JSON framing)'.format(start, start+size, len(compressed_record)))
                     self.spool.write(compressed_record)
@@ -157,7 +165,8 @@ class MessageSinkWorker(Process):
         self.events.clear()
         self.flushed = self.loop.time()
 
-    def _prepare_record(self, group, stream, events, filters=[], type='DATA_MESSAGE'):
+    @classmethod
+    def _prepare_record(cls, account, group, stream, events, filters=[], type='DATA_MESSAGE'):
         if not isinstance(filters, list):
             filters = [filters]
 
@@ -165,13 +174,13 @@ class MessageSinkWorker(Process):
             filters = [group]
 
         return {
-            'owner': self.account,
+            'owner': account,
             'logGroup': group,
             'logStream': stream,
             'subscriptionFilters': filters,
             'messageType': type,
             'logEvents': events,
-        }
+            }
 
     @classmethod
     def _compress_record(cls, record):
