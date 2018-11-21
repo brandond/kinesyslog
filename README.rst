@@ -11,7 +11,6 @@ This module requires Python 3.5 or better, due to its use of the ``asyncio`` fra
 This module uses Boto3 to make API calls against the Kinesis Firehose service. You
 should have a working AWS API environment (~/.aws/credentials,
 environment variables, or EC2 IAM Role) that allows calling Kinesis Firehose's
-``put-record-batch`` method against the account that it is running in, and the stream
-specified on the command line.
+``put-record-batch`` method against the stream specified on the command line.
 
 Consult `README.md on GitHub <https://github.com/brandond/kinesyslog/blob/master/README.md>`__ for usage instructions.

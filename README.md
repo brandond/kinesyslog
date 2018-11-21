@@ -14,7 +14,7 @@ This module will make use of [libuuid](https://pypi.org/project/libuuid/) for fa
 
 This module uses Boto3 to make API calls against the Kinesis Firehose service. You should have a working AWS API 
 environment (~/.aws/credentials, environment variables, or EC2 IAM Role) that allows calling Kinesis Firehose's
-``put-record-batch`` method against the account the specified stream.
+``put-record-batch`` method against the stream specified on the command line.
 
 Usage
 -----
