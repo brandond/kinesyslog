@@ -1,7 +1,7 @@
 kinesyslog
 ==========
 [![PyPI version](https://badge.fury.io/py/kinesyslog.svg)](https://badge.fury.io/py/kinesyslog)
-[![Build Status](https://travis-ci.org/brandond/kinesyslog.svg?branch=master)](https://travis-ci.org/brandond/kinesyslog)
+[![Build Status](https://travis-ci.com/brandond/kinesyslog.svg?branch=master)](https://travis-ci.com/brandond/kinesyslog)
 
 Syslog and GELF relay to AWS Kinesis Firehose. Supports UDP, TCP, and TLS; RFC3164, RFC5424, RFC5425, RFC6587, GELF v1.1.
 
