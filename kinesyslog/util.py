@@ -18,8 +18,8 @@ def get_instance_region():
 
     try:
         r = fetcher._get_request(
-            url='http://169.254.169.254/latest/dynamic/instance-identity/document',
-            needs_retry=fetcher._needs_retry_for_credentials
+            url_path='/latest/dynamic/instance-identity/document',
+            retry_func=fetcher._needs_retry_for_credentials
         )
         return ujson.loads(r.text).get('region', None)
     except botocore.utils._RetriesExceededError:
