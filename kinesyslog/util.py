@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import signal
 
 import boto3
 import botocore.exceptions
@@ -63,5 +64,10 @@ def close_all_socks(socklist):
         sock.close()
 
 
-def interrupt(*args, **kwargs):
-    raise KeyboardInterrupt()
+def interrupt(sig_in, stack):
+    if sig_in == signal.SIGCHLD:
+        raise ChildProcessError('Received SIGCHLD')
+    elif sig_in == signal.SIGTERM:
+        raise SystemExit('Received SIGTERM')
+    else:
+        logger.warn('Received unhandled signal {0}'.format(sig_in))
