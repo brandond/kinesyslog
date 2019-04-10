@@ -36,9 +36,10 @@ setup(
         'dev': [
             'setuptools-version-command',
         ],
-        'libuuid': [
+        'all': [
             'libuuid >= 1.0.0',
-        ]
+            'setproctitle >= 1.1.10',
+        ],
     },
     include_package_data=True,
     install_requires=requirements,

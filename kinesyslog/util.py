@@ -8,6 +8,12 @@ from pkg_resources import get_distribution
 
 import ujson
 
+try:
+    from setproctitle import setproctitle
+except ImportError:
+    def setproctitle(title):
+        pass
+
 logger = logging.getLogger(__name__)
 pkgname = __name__.split('.')[0]
 version = get_distribution(pkgname).version
@@ -55,3 +61,7 @@ def close_all_socks(socklist):
     for sock in socklist[:]:
         socklist.remove(sock)
         sock.close()
+
+
+def interrupt(*args, **kwargs):
+    raise KeyboardInterrupt()

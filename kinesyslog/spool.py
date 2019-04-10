@@ -62,12 +62,15 @@ class EventSpoolWorker(Process):
         self.flushed = 0
 
     def run(self):
+        util.setproctitle('{0} ({1}:{2})'.format(__name__, self.delivery_stream, self.spool_dir))
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         self.loop = util.new_event_loop()
         self.loop.add_signal_handler(signal.SIGTERM, self.stop)
         self.schedule_flush()
         logger.debug('Worker starting')
         self.loop.run_forever()
+
+        # Time passes...
 
         logger.debug('Worker shutting down')
         tasks = asyncio.gather(*asyncio.Task.all_tasks(loop=self.loop), loop=self.loop, return_exceptions=True)

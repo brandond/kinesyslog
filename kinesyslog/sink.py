@@ -20,7 +20,7 @@ WSOCKS = list()
 
 
 class MessageSink(object):
-    def __init__(self, spool, message_class, group_prefix):
+    def __init__(self, spool, server, message_class, group_prefix):
         (rsock, wsock) = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         rsock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, constant.MAX_MESSAGE_BUFFER)
         wsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_BUFFER)
@@ -34,7 +34,7 @@ class MessageSink(object):
         self.stats = defaultdict(lambda: defaultdict(lambda: dict(messages=0, bytes=0)))
         self.loop = asyncio.get_event_loop()
         self.sock = wsock
-        self.worker = MessageSinkWorker(spool, message_class, group_prefix, rsock, daemon=True)
+        self.worker = MessageSinkWorker(spool, server, message_class, group_prefix, rsock, daemon=True)
 
     async def write(self, source, dest, message, timestamp):
         length = len(message)
@@ -59,13 +59,15 @@ class MessageSink(object):
         while self.worker.is_alive():
             self.worker.terminate()
             self.worker.join(1)
+        util.close_all_socks(WSOCKS)
         logger.debug('Worker shutdown complete')
 
 
 class MessageSinkWorker(Process):
-    def __init__(self, spool, message_class, group_prefix, sock, *args, **kwargs):
+    def __init__(self, spool, server, message_class, group_prefix, sock, *args, **kwargs):
         super(MessageSinkWorker, self).__init__(*args, **kwargs)
         self.spool = spool
+        self.server = server
         self.message_class = message_class
         self.group_prefix = group_prefix
         self.sock = sock
@@ -79,6 +81,7 @@ class MessageSinkWorker(Process):
             logger.warn('Unable to determine AWS Account ID; using default value.', exc_info=True)
 
     def run(self):
+        util.setproctitle('{0} ({1}:{2})'.format(__name__,  self.server.PROTOCOL.__name__, self.server._port))
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         util.close_all_socks(WSOCKS)
         self.loop = util.new_event_loop()
@@ -89,7 +92,11 @@ class MessageSinkWorker(Process):
         logger.debug('Worker starting')
         self.loop.run_forever()
 
+        # Time passes...
+
         logger.debug('Worker shutting down')
+        self.loop.remove_reader(self.sock.fileno())
+        util.close_all_socks(RSOCKS)
         tasks = asyncio.gather(*asyncio.Task.all_tasks(loop=self.loop), loop=self.loop, return_exceptions=True)
         tasks.add_done_callback(lambda f: self.loop.stop())
         tasks.cancel()
@@ -99,14 +106,15 @@ class MessageSinkWorker(Process):
         raise SystemExit(0)
 
     def stop(self):
-        self.loop.remove_reader(self.sock.fileno())
         self.loop.stop()
         self.flush()
 
     def read(self):
         try:
-            args = msgpack.unpackb(self.sock.recv(constant.MAX_MESSAGE_BUFFER))
-            self.loop.call_soon(self.add_message, *args)
+            buff = self.sock.recv(constant.MAX_MESSAGE_BUFFER)
+            if buff:
+                args = msgpack.unpackb(buff)
+                self.loop.call_soon(self.add_message, *args)
         except BlockingIOError:
             pass
         except UnpackValueError:

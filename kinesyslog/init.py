@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def shutdown_exception_handler(loop, context):
-    if "exception" not in context or not isinstance(context["exception"], CancelledError):
+    if 'exception' not in context or not isinstance(context['exception'], CancelledError):
         loop.default_exception_handler(context)
 
 
@@ -143,14 +143,14 @@ def listen(**kwargs):
         logging.getLogger('asyncio').setLevel('INFO')
         if kwargs.get('debug_asyncio', False):
             logging.getLogger('asyncio').setLevel('DEBUG')
-            os.environ.set('PYTHONASYNCIODEBUG', '1')
+            os.environ['PYTHONASYNCIODEBUG'] = '1'
     else:
         logging.getLogger('botocore').setLevel('ERROR')
 
     loop = get_event_loop()
     loop.set_exception_handler(shutdown_exception_handler)
 
-    from . import proxy
+    from . import proxy, util
     from .message import GelfMessage, SyslogMessage
     from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
                          SecureGelfServer, SecureSyslogServer, SyslogServer)
@@ -193,7 +193,14 @@ def listen(**kwargs):
         with EventSpool(delivery_stream=kwargs['stream'], spool_dir=kwargs['spool_dir'],
                         region_name=kwargs['region'], profile_name=kwargs['profile']) as spool:
             with ExitStack() as stack:
-                sinks = [stack.enter_context(MessageSink(spool=spool, message_class=message_class, group_prefix=kwargs['group_prefix'])) for s in servers]
+                sinks = []
+                for server in servers:
+                    sink = MessageSink(spool=spool,
+                                       server=server,
+                                       message_class=message_class,
+                                       group_prefix=kwargs['group_prefix'])
+                    context = stack.enter_context(sink)
+                    sinks.append(context)
                 for i, server in enumerate(servers):
                     try:
                         loop.run_until_complete(server.start(sink=sinks[i], loop=loop))
@@ -202,18 +209,22 @@ def listen(**kwargs):
                         servers.remove(server)
                 if servers:
                     try:
+                        util.setproctitle('{0} (master:{1})'.format(__name__, len(servers)))
                         logger.info('Successfully started {} servers'.format(len(servers)))
-                        loop.add_signal_handler(signal.SIGTERM, lambda: loop.stop())
+                        signal.signal(signal.SIGTERM, util.interrupt)
                         loop.run_forever()
                     except KeyboardInterrupt:
                         pass
+
+                    # Time passes...
+
                     logger.info('Shutting down servers')
                     for server in servers:
                         loop.run_until_complete(server.stop())
                 else:
                     raise Exception('All servers failed')
     except Exception as e:
-        logger.error('Failed to start Kinesyslog: {0}'.format(e))
+        logger.error('Unhandled exception: {0}'.format(e))
         if isinstance(e, PermissionError):
             sys.exit(posix.EX_NOPERM)
         else:
