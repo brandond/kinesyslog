@@ -19,7 +19,7 @@ install:
   - pip install --upgrade flake8
 
 script:
-  - flake8 --max-line-length 160 kinesyslog/
+  - flake8 kinesyslog/ utils/
 
 notifications:
   email: false
