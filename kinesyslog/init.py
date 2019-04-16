@@ -166,12 +166,12 @@ def listen(**kwargs):
                          SecureGelfServer, SecureSyslogServer, SyslogServer)
     from .sink import MessageSink
     from .spool import EventSpool
+    from .util import create_registry
 
-    if 0 not in kwargs.get('prometheus_port', [0]):
-        try:
-            from .prometheus import StatsServer, StatsSink, StatsRegistry
-        except ImportError:
-            from .stats import StatsServer, StatsSink, StatsRegistry
+    try:
+        from .prometheus import StatsServer, StatsSink, StatsRegistry
+    except ImportError:
+        from .stats import StatsServer, StatsSink, StatsRegistry
 
     if kwargs.get('gelf', False):
         message_class = GelfMessage
@@ -184,7 +184,7 @@ def listen(**kwargs):
         TCP = SyslogServer
         UDP = DatagramSyslogServer
 
-    registry = StatsRegistry()
+    registry = create_registry(StatsRegistry)
     servers = []
     try:
         for port in kwargs['prometheus_port']:
@@ -206,13 +206,19 @@ def listen(**kwargs):
         logger.error('Failed to validate {0} configuration: {1}'.format(
             e.__traceback__.tb_next.tb_frame.f_code.co_names[1], e))
 
-    if not servers:
+    if servers:
+        if registry.active:
+            registry.get('kinesyslog_listener_count').set(labels={}, value=len(servers) - 1)
+    else:
         logger.error('No valid servers configured -  you must enable at least one UDP, TCP, or TLS port')
         sys.exit(posix.EX_CONFIG)
 
     try:
-        with EventSpool(delivery_stream=kwargs['stream'], spool_dir=kwargs['spool_dir'],
-                        region_name=kwargs['region'], profile_name=kwargs['profile']) as spool:
+        with EventSpool(delivery_stream=kwargs['stream'],
+                        spool_dir=kwargs['spool_dir'],
+                        registry=registry,
+                        region_name=kwargs['region'],
+                        profile_name=kwargs['profile']) as spool:
             with ExitStack() as stack:
                 sinks = []
                 for server in servers:

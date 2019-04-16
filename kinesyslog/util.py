@@ -5,9 +5,8 @@ import signal
 import boto3
 import botocore.exceptions
 import botocore.utils
-from pkg_resources import get_distribution
-
 import ujson
+from pkg_resources import get_distribution
 
 try:
     from setproctitle import setproctitle
@@ -62,3 +61,10 @@ def interrupt(sig_in, stack):
         raise SystemExit('Received SIGTERM')
     else:
         logger.warn('Received unhandled signal {0}'.format(sig_in))
+
+
+def create_registry(Registry):
+    registry = Registry()
+    if registry.active:
+        registry.register_collectors()
+    return registry

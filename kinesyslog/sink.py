@@ -1,16 +1,15 @@
+import asyncio
 import logging
 import math
 import signal
 import socket
-import asyncio
 from collections import defaultdict
 from gzip import compress
 from multiprocessing import Process
 
 import msgpack
-from msgpack.exceptions import UnpackValueError
-
 import ujson
+from msgpack.exceptions import UnpackValueError
 
 from . import constant, util
 
@@ -29,9 +28,8 @@ class MessageSink(object):
         RSOCKS.append(rsock)
         WSOCKS.append(wsock)
 
-        self.packer = msgpack.Packer()
+        self.packer = msgpack.Packer(use_bin_type=True)
         self.lock = asyncio.Lock()
-        self.stats = defaultdict(lambda: defaultdict(lambda: dict(messages=0, bytes=0)))
         self.loop = asyncio.get_event_loop()
         self.sock = wsock
         self.worker = MessageSinkWorker(spool, server, message_class, group_prefix, rsock, daemon=True)
@@ -45,9 +43,6 @@ class MessageSink(object):
 
         async with self.lock:
             await self.loop.sock_sendall(self.sock, self.packer.pack([source, dest, message, timestamp]))
-
-        self.stats[dest][source]['messages'] += 1
-        self.stats[dest][source]['bytes'] += length
 
     def __enter__(self):
         self.worker.start()

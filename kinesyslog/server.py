@@ -1,7 +1,7 @@
 import logging
 import ssl
-
 from asyncio.base_events import Server
+
 from .protocol import (DatagramGelfProtocol, DatagramSyslogProtocol,
                        DefaultProtocol, GelfProtocol, SecureGelfProtocol,
                        SecureSyslogProtocol, SyslogProtocol)
@@ -21,7 +21,7 @@ class BaseServer(object):
         self._args = {}
 
     def _protocol_factory(self, sink, loop):
-        return lambda: self.PROTOCOL(sink=sink, loop=loop, **self._args)
+        return lambda: self.PROTOCOL(sink=sink, loop=loop, registry=self._registry, **self._args)
 
     async def start(self, sink, loop):
         self._server = await loop.create_server(

@@ -17,12 +17,12 @@ class DefaultProtocol(object):
 
 
 class BaseLoggingProtocol(object):
-    __slots__ = ['_sink', '_length', '_discard', '_buffer', '_transport', '_sockname', '_paused']
     PROTOCOL = DefaultProtocol
 
-    def __init__(self, sink, loop):
+    def __init__(self, sink, loop, registry):
         self._sink = sink
         self._loop = loop
+        self._registry = registry
         self._length = 0
         self._discard = 0
         self._buffer = bytearray()
@@ -39,6 +39,9 @@ class BaseLoggingProtocol(object):
 
     def data_received(self, data, addr=None):
         if self._loop.is_running():
+            addr = addr or self._transport.get_extra_info('peername')
+            labels = {'source': addr[0], 'port': self._sockname[1]}
+            self._registry.get('kinesyslog_message_bytes_total').add(labels=labels, value=len(data))
             task = self._loop.create_task(self._feed_data(data, addr))
             task.add_done_callback(self._feed_done)
 
@@ -94,6 +97,8 @@ class BaseLoggingProtocol(object):
 
     async def _write(self, addr, message):
         addr = addr or self._transport.get_extra_info('peername')
+        labels = {'source': addr[0], 'port': self._sockname[1]}
+        self._registry.get('kinesyslog_message_count_total').inc(labels=labels)
         await self._sink.write(addr[0], self._sockname[1], bytes(message), time.time())
 
     async def _feed_data(self, data, addr=None):
@@ -240,7 +245,6 @@ class DatagramSyslogProtocol(SyslogProtocol):
 
 
 class DatagramGelfProtocol(GelfProtocol):
-    __slots__ = ['_chunks']
 
     def __init__(self, *args, **kwargs):
         super(DatagramGelfProtocol, self).__init__(*args, **kwargs)
