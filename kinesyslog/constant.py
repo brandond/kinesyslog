@@ -3,9 +3,7 @@ from struct import Struct
 MAX_MESSAGE_LENGTH = 1024 * 64  # Maximum supported message length
 MAX_MESSAGE_BUFFER = MAX_MESSAGE_LENGTH * 4  # Maximum RX buffer size
 DIGITS = bytearray(i for i in range(0x30, 0x3A))  # First char of octet-counted syslog message
-TERMS = bytearray([0x00, 0x0A, 0x0D])  # Framed message terminators
-METHODS = bytearray([0x47, 0x48])  # First char of common HTTP methods
-GET_STATS = b'GET /STATS HTTP/1'
+TERMS = bytearray([0x0A, 0x00, 0x0D])  # Framed message terminators
 ZLIB_MAGIC = b'\x78'  # ZLIB magic
 GZIP_MAGIC = b'\x1F\x8B'  # GZIP magic
 GELF_MAGIC = b'\x1E\x0F'  # Chunked GELF header magic
@@ -14,7 +12,8 @@ FLUSH_TIME = 60  # Sink buffer max message age
 FLUSH_SIZE = 1024 * 1024 * 4  # Sink buffer max size
 MAX_RECORD_SIZE = 1024 * 1000  # Maximum Firehose record size
 TIMER_INTERVAL = 10  # Sink buffer autoflush check interval
-MAX_RECORD_COUNT = 500  # Max Firehose records per batch
+MAX_BATCH_COUNT = 500  # Max Firehose records per batch
+MAX_BATCH_SIZE = 1024 * 1024 * 4  # Max cumulative Firehose record size per batch
 SPOOL_PREFIX = 'firehose_event-'  # Spool file prefix
 TEMP_PREFIX = '_temp_'  # Temp file prefix
 PROXY10_SEP = b'\x20'  # Proxy Protocol v1.0 separator
@@ -39,3 +38,13 @@ PROXY20_TLV_TYPES = {0x01: 'PP2_TYPE_ALPN',
                      0x26: 'PP2_TYPE_NETNS',
                      0xEA: 'PP2_TYPE_AWS',
                      }
+STAT_HTTP_REQS = 'kinesyslog_http_requests_total'
+STAT_MESSAGE_BYTES = 'kinesyslog_message_bytes_total'
+STAT_MESSAGE_COUNT = 'kinesyslog_message_count_total'
+STAT_BATCH_FAILED = 'kinesyslog_batch_record_failed'
+STAT_BATCH_RECORDS = 'kinesyslog_batch_records'
+STAT_BATCH_BYTES = 'kinesyslog_batch_bytes'
+STAT_RECORD_BYTES = 'kinesyslog_record_bytes'
+STAT_LISTENERS = 'kinesyslog_listener_count'
+STAT_SPOOL_COUNT = 'kinesyslog_spool_count'
+STAT_SPOOL_AGE = 'kinesyslog_spool_age'

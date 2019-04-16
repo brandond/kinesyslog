@@ -1,13 +1,13 @@
 import asyncio
 import logging
 import signal
+from random import random
 
 import boto3
 import botocore.exceptions
 import botocore.utils
-from pkg_resources import get_distribution
-
 import ujson
+from pkg_resources import get_distribution
 
 try:
     from setproctitle import setproctitle
@@ -40,15 +40,6 @@ def get_region(region_name=None, profile_name=None):
     return region
 
 
-def send_http_ok(transport):
-    transport.write('HTTP/1.1 200 OK\r\nServer: {}/{}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'.format(pkgname, version).encode())
-
-
-def send_http_stats(transport, stats):
-    transport.write('HTTP/1.1 200 OK\r\nServer: {}/{}\r\nConnection: close\r\nContent-type: application/json\r\n\r\n'.format(pkgname, version).encode())
-    transport.write(ujson.dumps(stats, transport, escape_forward_slashes=False, indent=2).encode())
-
-
 def new_event_loop():
     old_loop = asyncio.get_event_loop()
     new_loop = asyncio.new_event_loop()
@@ -71,3 +62,17 @@ def interrupt(sig_in, stack):
         raise SystemExit('Received SIGTERM')
     else:
         logger.warn('Received unhandled signal {0}'.format(sig_in))
+
+
+def create_registry(Registry):
+    registry = Registry()
+    if registry.active:
+        registry.register_collectors()
+    return registry
+
+
+def random_digits(length):
+    strbuf = bytearray(length)
+    for i in range(0, length):
+        strbuf[i] = int(random() * 10.0) + 48
+    return strbuf.decode()
