@@ -122,6 +122,15 @@ def validate_user(ctx, param, value):
     multiple=True,
 )
 @click.option(
+    '--prometheus-port',
+    type=int,
+    help='Bind port for Prometheus statistics listener; 0 to disable. May be repeated.',
+    envvar='KINESYSLOG_PROMETHEUS_PORT',
+    default=[0],
+    show_default=True,
+    multiple=True,
+)
+@click.option(
     '--address',
     type=str,
     help='Bind address.',
@@ -152,10 +161,17 @@ def listen(**kwargs):
 
     from . import proxy, util
     from .message import GelfMessage, SyslogMessage
+    from .protocol import BaseLoggingProtocol
     from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
                          SecureGelfServer, SecureSyslogServer, SyslogServer)
     from .sink import MessageSink
     from .spool import EventSpool
+
+    if 0 not in kwargs.get('prometheus_port', [0]):
+        try:
+            from .prometheus import StatsServer, StatsSink, StatsRegistry
+        except ImportError:
+            from .stats import StatsServer, StatsSink, StatsRegistry
 
     if kwargs.get('gelf', False):
         message_class = GelfMessage
@@ -168,19 +184,24 @@ def listen(**kwargs):
         TCP = SyslogServer
         UDP = DatagramSyslogServer
 
+    registry = StatsRegistry()
     servers = []
     try:
-        for port in kwargs['udp_port']:
+        for port in kwargs['prometheus_port']:
             if port:
-                servers.append(UDP(host=kwargs['address'], port=port))
-        for port in kwargs['tcp_port']:
-            if port:
-                server = proxy.wrap(TCP) if port in kwargs['proxy_protocol'] else TCP
-                servers.append(server(host=kwargs['address'], port=port))
+                server = proxy.wrap(StatsServer) if port in kwargs['proxy_protocol'] else StatsServer
+                servers.append(server(host=kwargs['address'], port=port, registry=registry))
         for port in kwargs['tls_port']:
             if port:
                 server = proxy.wrap(TLS) if port in kwargs['proxy_protocol'] else TLS
-                servers.append(server(host=kwargs['address'], port=port, certfile=kwargs['cert'], keyfile=kwargs['key']))
+                servers.append(server(host=kwargs['address'], port=port, registry=registry, certfile=kwargs['cert'], keyfile=kwargs['key']))
+        for port in kwargs['tcp_port']:
+            if port:
+                server = proxy.wrap(TCP) if port in kwargs['proxy_protocol'] else TCP
+                servers.append(server(host=kwargs['address'], port=port, registry=registry))
+        for port in kwargs['udp_port']:
+            if port:
+                servers.append(UDP(host=kwargs['address'], port=port, registry=registry))
     except Exception as e:
         logger.error('Failed to validate {0} configuration: {1}'.format(
             e.__traceback__.tb_next.tb_frame.f_code.co_names[1], e))
@@ -195,10 +216,11 @@ def listen(**kwargs):
             with ExitStack() as stack:
                 sinks = []
                 for server in servers:
-                    sink = MessageSink(spool=spool,
-                                       server=server,
-                                       message_class=message_class,
-                                       group_prefix=kwargs['group_prefix'])
+                    sink = MessageSink if issubclass(server.PROTOCOL, BaseLoggingProtocol) else StatsSink
+                    sink = sink(spool=spool,
+                                server=server,
+                                message_class=message_class,
+                                group_prefix=kwargs['group_prefix'])
                     context = stack.enter_context(sink)
                     sinks.append(context)
 

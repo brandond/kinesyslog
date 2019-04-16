@@ -7,14 +7,13 @@ from asyncio.sslproto import SSLProtocol
 
 from . import constant
 from .gelf import ChunkedMessage
-from .util import send_http_ok, send_http_stats
 
 logger = logging.getLogger(__name__)
 
 
 class DefaultProtocol(object):
     def __init__(self, *args, **kwargs):
-        raise NotImplementedError
+        raise NotImplementedError()
 
 
 class BaseLoggingProtocol(object):
@@ -74,16 +73,6 @@ class BaseLoggingProtocol(object):
         if message:
             logger.error('Closing connection: {}'.format(message), exc_info=exception)
         if self._transport:
-            self._transport.close()
-        if self._buffer:
-            self._buffer.clear()
-
-    def _close_with_http(self):
-        if self._transport:
-            if self._buffer[:len(constant.GET_STATS)].upper() == constant.GET_STATS:
-                send_http_stats(self._transport, self._sink.stats)
-            else:
-                send_http_ok(self._transport)
             self._transport.close()
         if self._buffer:
             self._buffer.clear()
@@ -151,8 +140,6 @@ class SyslogProtocol(BaseLoggingProtocol):
                 message = self._get_octet_counted_message()
             elif self._buffer[0] in constant.TERMS:
                 del self._buffer[0]
-            elif self._buffer[0] in constant.METHODS:
-                self._close_with_http()
             else:
                 message = self._get_non_transparent_framed_message()
 
@@ -215,8 +202,6 @@ class GelfProtocol(BaseLoggingProtocol):
                 message = self._get_gzip_message()
             elif self._buffer[0] in constant.TERMS:
                 del self._buffer[0]
-            elif self._buffer[0] in constant.METHODS:
-                self._close_with_http()
             else:
                 self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self._buffer))
 

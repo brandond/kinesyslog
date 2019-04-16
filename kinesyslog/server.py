@@ -13,10 +13,11 @@ class BaseServer(object):
     __slots__ = ['_host', '_port', '_args', '_server']
     PROTOCOL = DefaultProtocol
 
-    def __init__(self, host, port):
+    def __init__(self, host, port, registry):
         logger.info('Starting {0} on {1}:{2}'.format(self.__class__.__name__, host, port))
         self._host = host
         self._port = port
+        self._registry = registry
         self._args = {}
 
     def _protocol_factory(self, sink, loop):

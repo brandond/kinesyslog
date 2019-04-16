@@ -40,15 +40,6 @@ def get_region(region_name=None, profile_name=None):
     return region
 
 
-def send_http_ok(transport):
-    transport.write('HTTP/1.1 200 OK\r\nServer: {}/{}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'.format(pkgname, version).encode())
-
-
-def send_http_stats(transport, stats):
-    transport.write('HTTP/1.1 200 OK\r\nServer: {}/{}\r\nConnection: close\r\nContent-type: application/json\r\n\r\n'.format(pkgname, version).encode())
-    transport.write(ujson.dumps(stats, transport, escape_forward_slashes=False, indent=2).encode())
-
-
 def new_event_loop():
     old_loop = asyncio.get_event_loop()
     new_loop = asyncio.new_event_loop()
