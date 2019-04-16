@@ -122,6 +122,15 @@ def validate_user(ctx, param, value):
     multiple=True,
 )
 @click.option(
+    '--prometheus-port',
+    type=int,
+    help='Bind port for Prometheus statistics listener; 0 to disable. May be repeated.',
+    envvar='KINESYSLOG_PROMETHEUS_PORT',
+    default=[0],
+    show_default=True,
+    multiple=True,
+)
+@click.option(
     '--address',
     type=str,
     help='Bind address.',
@@ -147,15 +156,27 @@ def listen(**kwargs):
     else:
         logging.getLogger('botocore').setLevel('ERROR')
 
+    prometheus_loaded = False
     loop = get_event_loop()
     loop.set_exception_handler(shutdown_exception_handler)
 
     from . import proxy, util
     from .message import GelfMessage, SyslogMessage
+    from .protocol import BaseLoggingProtocol
     from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
                          SecureGelfServer, SecureSyslogServer, SyslogServer)
     from .sink import MessageSink
-    from .spool import EventSpool
+    from .spool import EventSpoolReader, EventSpoolWriter
+    from .util import create_registry
+
+    if 0 not in kwargs.get('prometheus_port', [0]):
+        try:
+            from .prometheus import StatsServer, StatsSink, StatsRegistry
+            prometheus_loaded = True
+        except ImportError:
+            pass
+    if not prometheus_loaded:
+        from .stats import StatsServer, StatsSink, StatsRegistry  # noqa F811
 
     if kwargs.get('gelf', False):
         message_class = GelfMessage
@@ -168,65 +189,83 @@ def listen(**kwargs):
         TCP = SyslogServer
         UDP = DatagramSyslogServer
 
+    registry = create_registry(StatsRegistry)
     servers = []
     try:
-        for port in kwargs['udp_port']:
+        for port in kwargs['prometheus_port']:
             if port:
-                servers.append(UDP(host=kwargs['address'], port=port))
-        for port in kwargs['tcp_port']:
-            if port:
-                server = proxy.wrap(TCP) if port in kwargs['proxy_protocol'] else TCP
-                servers.append(server(host=kwargs['address'], port=port))
+                server = proxy.wrap(StatsServer) if port in kwargs['proxy_protocol'] else StatsServer
+                servers.append(server(host=kwargs['address'], port=port, registry=registry))
         for port in kwargs['tls_port']:
             if port:
                 server = proxy.wrap(TLS) if port in kwargs['proxy_protocol'] else TLS
-                servers.append(server(host=kwargs['address'], port=port, certfile=kwargs['cert'], keyfile=kwargs['key']))
+                servers.append(server(host=kwargs['address'], port=port, registry=registry, certfile=kwargs['cert'], keyfile=kwargs['key']))
+        for port in kwargs['tcp_port']:
+            if port:
+                server = proxy.wrap(TCP) if port in kwargs['proxy_protocol'] else TCP
+                servers.append(server(host=kwargs['address'], port=port, registry=registry))
+        for port in kwargs['udp_port']:
+            if port:
+                servers.append(UDP(host=kwargs['address'], port=port, registry=registry))
     except Exception as e:
         logger.error('Failed to validate {0} configuration: {1}'.format(
             e.__traceback__.tb_next.tb_frame.f_code.co_names[1], e))
 
-    if not servers:
+    if servers:
+        if registry.active:
+            registry.get('kinesyslog_listener_count').set(labels={}, value=len(servers) - 1)
+    else:
         logger.error('No valid servers configured -  you must enable at least one UDP, TCP, or TLS port')
         sys.exit(posix.EX_CONFIG)
 
     try:
-        with EventSpool(delivery_stream=kwargs['stream'], spool_dir=kwargs['spool_dir'],
-                        region_name=kwargs['region'], profile_name=kwargs['profile']) as spool:
-            with ExitStack() as stack:
-                sinks = []
+        with ExitStack() as stack:
+            spool_writer = EventSpoolWriter(spool_dir=kwargs['spool_dir'])
+            spool_reader = EventSpoolReader(delivery_stream=kwargs['stream'],
+                                            spool_dir=kwargs['spool_dir'],
+                                            registry=registry,
+                                            region_name=kwargs['region'],
+                                            profile_name=kwargs['profile'])
+            account = spool_reader.get_account()
+            stack.enter_context(spool_reader)
+            sinks = []
+
+            for server in servers:
+                sink = MessageSink if issubclass(server.PROTOCOL, BaseLoggingProtocol) else StatsSink
+                sink = sink(spool=spool_writer,
+                            server=server,
+                            message_class=message_class,
+                            group_prefix=kwargs['group_prefix'],
+                            account=account)
+                context = stack.enter_context(sink)
+                sinks.append(context)
+
+            for i, server in enumerate(servers):
+                try:
+                    loop.run_until_complete(server.start(sink=sinks[i], loop=loop))
+                    util.setproctitle('{0} (master:{1})'.format(__name__, i+1))
+                except Exception as e:
+                    logger.error('Failed to start {}: {}'.format(server.__class__.__name__, e), exc_info=True)
+                    servers.remove(server)
+
+            if servers:
+                # Everything started successfully, set up signal handlers and wait until termination
+                try:
+                    logger.info('Successfully started {} servers'.format(len(servers)))
+                    signal.signal(signal.SIGTERM, util.interrupt)
+                    signal.signal(signal.SIGCHLD, util.interrupt)
+                    loop.run_forever()
+                except (KeyboardInterrupt, ChildProcessError, SystemExit) as e:
+                    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+                    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+                    logger.info('Shutting down servers: {0}({1})'.format(e.__class__.__name__, e))
+
+                # Time passes...
+
                 for server in servers:
-                    sink = MessageSink(spool=spool,
-                                       server=server,
-                                       message_class=message_class,
-                                       group_prefix=kwargs['group_prefix'])
-                    context = stack.enter_context(sink)
-                    sinks.append(context)
-
-                for i, server in enumerate(servers):
-                    try:
-                        loop.run_until_complete(server.start(sink=sinks[i], loop=loop))
-                    except Exception as e:
-                        logger.error('Failed to start {}: {}'.format(server.__class__.__name__, e))
-                        servers.remove(server)
-
-                if servers:
-                    try:
-                        util.setproctitle('{0} (master:{1})'.format(__name__, len(servers)))
-                        logger.info('Successfully started {} servers'.format(len(servers)))
-                        signal.signal(signal.SIGTERM, util.interrupt)
-                        signal.signal(signal.SIGCHLD, util.interrupt)
-                        loop.run_forever()
-                    except (KeyboardInterrupt, ChildProcessError, SystemExit) as e:
-                        signal.signal(signal.SIGTERM, signal.SIG_DFL)
-                        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-                        logger.info('Shutting down servers: {0}'.format(e.__class__.__name__))
-
-                    # Time passes...
-
-                    for server in servers:
-                        loop.run_until_complete(server.stop())
-                else:
-                    raise Exception('All servers failed')
+                    loop.run_until_complete(server.stop())
+            else:
+                raise Exception('All servers failed')
     except Exception as e:
         logger.error('Unhandled exception: {0}'.format(e))
         if isinstance(e, PermissionError):

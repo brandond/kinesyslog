@@ -1,157 +1,175 @@
+import asyncio
+import ctypes
 import logging
 import math
+import random
 import signal
-import socket
-import asyncio
 from collections import defaultdict
-from gzip import compress
+from encodings.utf_8 import StreamWriter
+from gzip import GzipFile
+from io import BytesIO
 from multiprocessing import Process
-
-import msgpack
-from msgpack.exceptions import UnpackValueError
 
 import ujson
 
-from . import constant, util
+from . import constant, ringbuffer, util
 
 logger = logging.getLogger(__name__)
-RSOCKS = list()
-WSOCKS = list()
+src_buf = ctypes.create_string_buffer(constant.MAX_SOURCE_LENGTH)
+msg_buf = ctypes.create_string_buffer(constant.MAX_MESSAGE_LENGTH)
+
+
+def _pack_c_messages(source, dest, messages, timestamp):
+    count = len(messages)
+    c_messages = MessageBatch(timestamp=timestamp, dest=dest, count=count)
+    src_buf.raw = source.encode()
+    ctypes.memmove(c_messages.source, src_buf, constant.MAX_SOURCE_LENGTH)
+    for i in range(0, count):
+        length = len(messages[i])
+        c_messages.messages[i].length = length
+        msg_buf.raw = messages[i][:length]
+        ctypes.memmove(c_messages.messages[i].message, msg_buf, length)
+    return c_messages
+
+
+def _unpack_c_messages(c_messages):
+    source = ctypes.string_at(c_messages.source)
+    dest = c_messages.dest
+    timestamp = c_messages.timestamp
+    messages = [None] * c_messages.count
+    for i in range(0, c_messages.count):
+        messages[i] = ctypes.string_at(c_messages.messages[i].message, c_messages.messages[i].length)
+    return (source, dest, messages, timestamp)
+
+
+class Message(ctypes.Structure):
+    _fields_ = [
+        ('length', ctypes.c_uint),
+        ('message', ctypes.c_ubyte * constant.MAX_MESSAGE_LENGTH),
+    ]
+
+
+class MessageBatch(ctypes.Structure):
+    _fields_ = [
+        ('timestamp', ctypes.c_double),
+        ('dest', ctypes.c_uint),
+        ('count', ctypes.c_uint),
+        ('source', ctypes.c_ubyte * constant.MAX_SOURCE_LENGTH),
+        ('messages', Message * constant.MAX_MESSAGE_COUNT),
+    ]
 
 
 class MessageSink(object):
-    def __init__(self, spool, server, message_class, group_prefix):
-        (rsock, wsock) = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-        rsock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, constant.MAX_MESSAGE_BUFFER)
-        wsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_BUFFER)
-        rsock.setblocking(False)
-        wsock.setblocking(False)
-        RSOCKS.append(rsock)
-        WSOCKS.append(wsock)
-
-        self.packer = msgpack.Packer()
-        self.lock = asyncio.Lock()
-        self.stats = defaultdict(lambda: defaultdict(lambda: dict(messages=0, bytes=0)))
+    def __init__(self, spool, server, message_class, group_prefix, account):
         self.loop = asyncio.get_event_loop()
-        self.sock = wsock
-        self.worker = MessageSinkWorker(spool, server, message_class, group_prefix, rsock, daemon=True)
-
-    async def write(self, source, dest, message, timestamp):
-        length = len(message)
-        if length > constant.MAX_MESSAGE_LENGTH:
-            logger.warn('Truncating {} byte message'.format(length))
-            message = message[:constant.MAX_MESSAGE_LENGTH]
-            length = constant.MAX_MESSAGE_LENGTH
-
-        async with self.lock:
-            await self.loop.sock_sendall(self.sock, self.packer.pack([source, dest, message, timestamp]))
-
-        self.stats[dest][source]['messages'] += 1
-        self.stats[dest][source]['bytes'] += length
+        self.ring = ringbuffer.RingBuffer(c_type=MessageBatch, slot_count=constant.MAX_MESSAGE_COUNT)
+        self.worker = MessageSinkWorker(spool, server, message_class, group_prefix, account, self.ring, self.ring.new_reader(), daemon=True)
 
     def __enter__(self):
+        self.ring.new_writer()
         self.worker.start()
-        util.close_all_socks(RSOCKS)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        logger.debug('Worker shutdown requested')
-        while self.worker.is_alive():
-            self.worker.terminate()
-            self.worker.join(1)
-        util.close_all_socks(WSOCKS)
-        logger.debug('Worker shutdown complete')
+        if self.ring:
+            self.ring.writer_done()
+            self.ring = None
+        if self.worker.is_alive():
+            logger.debug('Waiting for worker process shutdown')
+            self.worker.join()
+            logger.debug('Worker process shutdown complete')
+
+    async def write(self, source, dest, messages, timestamp):
+        if self.ring:
+            await self.write_messages(source, dest, messages, timestamp)
+
+    async def write_messages(self, source, dest, messages, timestamp):
+        c_messages = _pack_c_messages(source, dest, messages, timestamp)
+        while True:
+            try:
+                return self.ring.try_write(c_messages)
+            except ringbuffer.WaitingForReaderError:
+                await asyncio.sleep(0)
 
 
 class MessageSinkWorker(Process):
-    def __init__(self, spool, server, message_class, group_prefix, sock, *args, **kwargs):
+    def __init__(self, spool, server, message_class, group_prefix, account, ring, reader, *args, **kwargs):
         super(MessageSinkWorker, self).__init__(*args, **kwargs)
         self.spool = spool
         self.server = server
         self.message_class = message_class
         self.group_prefix = group_prefix
-        self.sock = sock
         self.events = defaultdict(list)
-        self.account = '000000000000'
-
-        try:
-            client = spool.session.client('sts', config=spool.config)
-            self.account = client.get_caller_identity()['Account']
-        except Exception:
-            logger.warn('Unable to determine AWS Account ID; using default value.', exc_info=True)
+        self.account = account
+        self.ring = ring
+        self.reader = reader
 
     def run(self):
+        logger.debug('Worker starting')
         util.setproctitle('{0} ({1}:{2})'.format(__name__,  self.server.PROTOCOL.__name__, self.server._port))
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        util.close_all_socks(WSOCKS)
+        random.seed()
+
         self.loop = util.new_event_loop()
-        self.loop.add_signal_handler(signal.SIGTERM, self.stop)
         self.clear()
-        self.schedule_flush()
-        self.loop.add_reader(self.sock.fileno(), self.read)
-        logger.debug('Worker starting')
-        self.loop.run_forever()
+        self.loop.create_task(self.flush_check())
+        self.loop.run_until_complete(self.read())
 
         # Time passes...
 
         logger.debug('Worker shutting down')
-        self.loop.remove_reader(self.sock.fileno())
-        util.close_all_socks(RSOCKS)
-        tasks = asyncio.gather(*asyncio.Task.all_tasks(loop=self.loop), loop=self.loop, return_exceptions=True)
-        tasks.add_done_callback(lambda f: self.loop.stop())
-        tasks.cancel()
-        while not tasks.done() and not self.loop.is_closed():
-            self.loop.run_forever()
-
+        self.loop.run_until_complete(self.loop.shutdown_asyncgens())
+        self.flush()
         raise SystemExit(0)
 
-    def stop(self):
-        self.loop.stop()
-        self.flush()
+    async def read(self):
+        async for c_messages in self.read_messages():
+            self.loop.call_soon(self.add_messages, *_unpack_c_messages(c_messages))
 
-    def read(self):
-        try:
-            buff = self.sock.recv(constant.MAX_MESSAGE_BUFFER)
-            if buff:
-                args = msgpack.unpackb(buff)
-                self.loop.call_soon(self.add_message, *args)
-        except BlockingIOError:
-            pass
-        except UnpackValueError:
-            logger.warn('Failed to unpack message', exc_info=True)
+    async def read_messages(self):
+        while True:
+            try:
+                for c_messages in self.ring.blocking_read(self.reader, length=0, timeout=1.0):
+                    yield c_messages
+            except ringbuffer.WaitingForWriterError:
+                pass
+            except ringbuffer.WriterFinishedError:
+                logger.debug('Writer finished, shutting down')
+                break
+            await asyncio.sleep(0)
 
-    def add_message(self, source, dest, message, timestamp):
-        source = source.decode('utf-8', 'backslashreplace')
-        event = self.message_class.create_event(source, message, timestamp)
-        self.events[(source, dest)].append(event)
-        self.size += len(message)
-        self.count += 1
+    def add_messages(self, source, dest, messages, timestamp):
+        source = source.decode()
+        for message in messages:
+            event = self.message_class.create_event(source, message, timestamp)
+            self.events[(source, dest)].append(event)
+            self.size += len(message)
+            self.count += 1
         if self.size > constant.FLUSH_SIZE:
             self.flush()
 
-    def schedule_flush(self):
-        self.loop.call_later(constant.TIMER_INTERVAL, self.flush_check)
-
-    def flush_check(self):
-        age = self.loop.time() - self.flushed
-        logger.debug('flush check: messages={0} size={1} age={2}'.format(self.count, self.size, age))
-        if self.events and age >= constant.FLUSH_TIME:
-            self.loop.call_soon(self.flush)
-        self.schedule_flush()
+    async def flush_check(self):
+        while True:
+            await asyncio.sleep(constant.TIMER_INTERVAL)
+            age = self.loop.time() - self.flushed
+            logger.debug('flush check: messages={0} size={1} age={2}'.format(self.count, self.size, age))
+            if self.events and age >= constant.FLUSH_TIME:
+                self.loop.call_soon(self.flush)
 
     def flush(self):
+        compress_buf = BytesIO()
         for (source, dest), events in self.events.items():
             group = '{0}/{1}/{2}'.format(self.group_prefix, self.message_class.name, dest)
             record = self._prepare_record(self.account, group, source, events)
-            compressed_record = self._compress_record(record)
-            logger.debug('Events for {0} > {1} compressed from {2} to {3} bytes (with JSON framing)'.format(group, source, self.size, len(compressed_record)))
+            self._compress_record(record, compress_buf)
+            logger.debug('Events for {0} > {1} compressed from {2} to {3} bytes (with JSON framing)'.format(group, source, self.size, compress_buf.tell()))
 
-            if len(compressed_record) > constant.MAX_RECORD_SIZE:
+            if compress_buf.tell() > constant.MAX_RECORD_SIZE:
                 # This approach naievely hopes that splitting a record into even parts will put it
                 # below the max record size. Further tuning may be required.
-                split_count = math.ceil(len(compressed_record) / constant.MAX_RECORD_SIZE)
+                split_count = math.ceil(compress_buf.tell() / constant.MAX_RECORD_SIZE)
                 logger.warn('Compressed record size of {0} bytes exceeds maximum Firehose record size of {1} bytes; splitting into {2} records'.format(
-                    len(compressed_record),
+                    compress_buf.tell(),
                     constant.MAX_RECORD_SIZE,
                     split_count
                 ))
@@ -159,12 +177,12 @@ class MessageSinkWorker(Process):
                 size = int(len(record['logEvents']) / split_count)
                 while start < len(record['logEvents']):
                     record_part = self._prepare_record(self.account, group, source, record['logEvents'][start:start+size])
-                    compressed_record = self._compress_record(record_part)
-                    logger.debug('Events[{0}:{1}] compressed to {2} bytes (with JSON framing)'.format(start, start+size, len(compressed_record)))
-                    self.spool.write(compressed_record)
+                    self._compress_record(record_part, compress_buf)
+                    logger.debug('Events[{0}:{1}] compressed to {2} bytes (with JSON framing)'.format(start, start+size, compress_buf.tell()))
+                    self.spool.write(compress_buf)
                     start += size
             else:
-                self.spool.write(compressed_record)
+                self.spool.write(compress_buf)
         self.clear()
 
     def clear(self):
@@ -191,5 +209,9 @@ class MessageSinkWorker(Process):
             }
 
     @classmethod
-    def _compress_record(cls, record):
-        return compress(ujson.dumps(record, escape_forward_slashes=False).encode())
+    def _compress_record(cls, record, buf):
+        buf.seek(0, 0)
+        buf.truncate()
+        with GzipFile(fileobj=buf, mode='wb', compresslevel=9) as g:
+            with StreamWriter(stream=g, errors='backslashescape') as s:
+                ujson.dump(record, s, escape_forward_slashes=False)
