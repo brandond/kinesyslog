@@ -7,23 +7,22 @@ from asyncio.sslproto import SSLProtocol
 
 from . import constant
 from .gelf import ChunkedMessage
-from .util import send_http_ok, send_http_stats
 
 logger = logging.getLogger(__name__)
 
 
 class DefaultProtocol(object):
     def __init__(self, *args, **kwargs):
-        raise NotImplementedError
+        raise NotImplementedError()
 
 
 class BaseLoggingProtocol(object):
-    __slots__ = ['_sink', '_length', '_discard', '_buffer', '_transport', '_sockname', '_paused']
     PROTOCOL = DefaultProtocol
 
-    def __init__(self, sink, loop):
+    def __init__(self, sink, loop, registry):
         self._sink = sink
         self._loop = loop
+        self._registry = registry
         self._length = 0
         self._discard = 0
         self._buffer = bytearray()
@@ -40,12 +39,13 @@ class BaseLoggingProtocol(object):
 
     def data_received(self, data, addr=None):
         if self._loop.is_running():
+            addr = addr or self._transport.get_extra_info('peername')
             task = self._loop.create_task(self._feed_data(data, addr))
             task.add_done_callback(self._feed_done)
 
     def datagram_received(self, data, addr):
         # Append terminator to simplify parsing
-        self.data_received(data + b'\x00', addr)
+        self.data_received(data + b'\x0A', addr)
 
     def eof_received(self):
         pass
@@ -54,13 +54,24 @@ class BaseLoggingProtocol(object):
         self._close_with_error('Protocol error on {0}'.format(self._sockname[1]), exc)
 
     def connection_lost(self, exc):
-        self.data_received(b'')
+        if self._transport:
+            self.data_received(b'')
 
     def pause_writing(self):
         pass
 
     def resume_writing(self):
         pass
+
+    def _inc_counter(self, addr, counter, value):
+        if self._registry.active:
+            counter = self._registry.collectors[counter]
+            labels = '{{"port": {0}, "source": "{1}"}}'.format(self._sockname[1], addr[0])
+            try:
+                cur_value = counter.values.store[labels]
+            except KeyError:
+                cur_value = 0
+            counter.values.store[labels] = cur_value + value
 
     def _feed_done(self, task):
         try:
@@ -78,37 +89,28 @@ class BaseLoggingProtocol(object):
         if self._buffer:
             self._buffer.clear()
 
-    def _close_with_http(self):
-        if self._transport:
-            if self._buffer[:len(constant.GET_STATS)].upper() == constant.GET_STATS:
-                send_http_stats(self._transport, self._sink.stats)
-            else:
-                send_http_ok(self._transport)
-            self._transport.close()
-        if self._buffer:
-            self._buffer.clear()
-
     def _get_non_transparent_framed_message(self):
         """
         Handle non-transparently-framed messages by searching for one of several possible terminators
         https://tools.ietf.org/html/rfc6587#section-3.4.2
         """
-        for separator in constant.TERMS:
-            message, sep, remainder = self._buffer.partition(bytes([separator]))
-            if sep:
-                if len(message) > constant.MAX_MESSAGE_LENGTH:
-                    message = message[:constant.MAX_MESSAGE_LENGTH]
-                self._buffer = remainder
+        for sep in constant.TERMS:
+            pos = self._buffer.find(sep)
+            if pos != -1:
+                message = self._buffer[:pos]
+                del self._buffer[:pos+1]
                 return message
-        if len(self._buffer) > constant.MAX_MESSAGE_LENGTH:
-            self._close_with_error('Maximum message length exceeded without finding terminating trailer character')
+        if len(self._buffer) > constant.MAX_MESSAGE_BUFFER:
+            self._close_with_error('Maximum buffer size exceeded without finding terminating trailer character')
 
-    async def _write(self, addr, message):
+    async def _write(self, addr, messages, timestamp):
         addr = addr or self._transport.get_extra_info('peername')
-        await self._sink.write(addr[0], self._sockname[1], bytes(message), time.time())
+        self._inc_counter(addr, constant.STAT_MESSAGE_COUNT, len(messages))
+        await self._sink.write(addr[0], self._sockname[1], messages, timestamp)
 
-    async def _feed_data(self, data, addr=None):
+    async def _feed_data(self, data, addr):
         self._buffer.extend(data)
+        self._inc_counter(addr, constant.STAT_MESSAGE_BYTES, len(data))
 
         if len(self._buffer) >= constant.MAX_MESSAGE_BUFFER and self._transport:
             self._paused = True
@@ -121,7 +123,7 @@ class BaseLoggingProtocol(object):
                 self._paused = False
                 self._transport.resume_reading()
             else:
-                self._close_with_error('Maximum buffer length exceeded without finding valid message')
+                self._close_with_error('Maximum buffer length exceeded without yeilding valid messages')
 
     async def _process_data(self, addr=None):
         raise NotImplementedError
@@ -139,27 +141,35 @@ class BaseSecureLoggingProtocol(SSLProtocol):
 
 
 class SyslogProtocol(BaseLoggingProtocol):
-    async def _process_data(self, addr=None):
-        while self._buffer:
-            message = None
+    async def _process_data(self, addr):
+        timestamp = time.time()
+        messages = []
 
-            if self._length:
-                message = self._get_octet_counted_message()
-            elif self._discard:
-                self._discard_excess_bytes()
-            elif self._buffer[0] in constant.DIGITS:
-                message = self._get_octet_counted_message()
-            elif self._buffer[0] in constant.TERMS:
-                del self._buffer[0]
-            elif self._buffer[0] in constant.METHODS:
-                self._close_with_http()
-            else:
-                message = self._get_non_transparent_framed_message()
+        while True:
+            while self._buffer and len(messages) < constant.MAX_MESSAGE_COUNT:
+                message = None
 
-            if message:
-                await self._write(addr, message)
+                if self._length:
+                    message = self._get_octet_counted_message()
+                elif self._discard:
+                    self._discard_excess_bytes()
+                elif self._buffer[0] in constant.DIGITS:
+                    message = self._get_octet_counted_message()
+                elif self._buffer[0] in constant.TERMS:
+                    del self._buffer[0]
+                else:
+                    message = self._get_non_transparent_framed_message()
+
+                if message:
+                    messages.append(message[:constant.MAX_MESSAGE_LENGTH])
+                else:
+                    break
+
+            if messages:
+                await self._write(addr, messages, timestamp)
+                messages.clear()
             else:
-                return
+                break
 
     def _discard_excess_bytes(self):
         """
@@ -178,11 +188,11 @@ class SyslogProtocol(BaseLoggingProtocol):
         https://tools.ietf.org/html/rfc5425#section-4.3.1
         """
         if not self._length:
-            length, sep, remainder = self._buffer.partition(b' ')
-            if sep:
+            pos = self._buffer.find(b' ')
+            if pos != -1:
                 try:
-                    self._length = int(length)
-                    self._buffer = remainder
+                    self._length = int(self._buffer[0:pos])
+                    del self._buffer[0:pos+1]
                 except ValueError:
                     # Handle as random chunk of log noncompliant message that happens to start with a digit
                     return self._get_non_transparent_framed_message()
@@ -203,27 +213,35 @@ class SyslogProtocol(BaseLoggingProtocol):
 
 
 class GelfProtocol(BaseLoggingProtocol):
-    async def _process_data(self, addr=None):
-        while self._buffer:
-            message = None
+    async def _process_data(self, addr):
+        timestamp = time.time()
+        messages = []
 
-            if self._buffer[0] == constant.OPENBRACKET:
-                message = self._get_non_transparent_framed_message()
-            elif self._buffer[0:1] == constant.ZLIB_MAGIC:
-                message = self._get_zlib_message()
-            elif self._buffer[0:2] == constant.GZIP_MAGIC:
-                message = self._get_gzip_message()
-            elif self._buffer[0] in constant.TERMS:
-                del self._buffer[0]
-            elif self._buffer[0] in constant.METHODS:
-                self._close_with_http()
-            else:
-                self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self._buffer))
+        while True:
+            while self._buffer and len(messages) < constant.MAX_MESSAGE_COUNT:
+                message = None
 
-            if message:
-                await self._write(addr, message)
+                if self._buffer[0] == constant.OPENBRACKET:
+                    message = self._get_non_transparent_framed_message()
+                elif self._buffer[0:1] == constant.ZLIB_MAGIC:
+                    message = self._get_zlib_message()
+                elif self._buffer[0:2] == constant.GZIP_MAGIC:
+                    message = self._get_gzip_message()
+                elif self._buffer[0] in constant.TERMS:
+                    del self._buffer[0]
+                else:
+                    self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self._buffer))
+
+                if message:
+                    messages.append(message[:constant.MAX_MESSAGE_LENGTH])
+                else:
+                    break
+
+            if messages:
+                await self._write(addr, messages, timestamp)
+                messages.clear()
             else:
-                return
+                break
 
     def _get_zlib_message(self):
         try:
@@ -255,7 +273,6 @@ class DatagramSyslogProtocol(SyslogProtocol):
 
 
 class DatagramGelfProtocol(GelfProtocol):
-    __slots__ = ['_chunks']
 
     def __init__(self, *args, **kwargs):
         super(DatagramGelfProtocol, self).__init__(*args, **kwargs)

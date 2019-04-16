@@ -10,8 +10,6 @@ Prerequisites
 
 This module requires Python 3.5 or better, due to its use of the ``asyncio`` framework.
 
-This module will make use of [libuuid](https://pypi.org/project/libuuid/) for fast UUID generation, if it is available.
-
 This module uses Boto3 to make API calls against the Kinesis Firehose service. You should have a working AWS API 
 environment (~/.aws/credentials, environment variables, or EC2 IAM Role) that allows calling Kinesis Firehose's
 ``put-record-batch`` method against the stream specified on the command line.
@@ -90,7 +88,6 @@ When delivered to S3, the objects will contain multiple concatenated GZip-compre
   * `<FORMAT>` is the message format, either 'syslog' or 'gelf'.
   * `<PORT>` is the TCP or UDP port on which the message was received.
 * The 'logStream' field contains the IP address that the message was received from. Note that this is probably NOT the same as the 'source' field in the payload, since that's (hopefully) a FQDN.
-* The 'id' field is a GUID instead of a numeric string.
 
 
 **Sample Record**
