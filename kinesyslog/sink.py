@@ -35,6 +35,9 @@ class MessageSink(object):
         self.worker = MessageSinkWorker(spool, server, message_class, group_prefix, rsock, daemon=True)
 
     async def write(self, source, dest, message, timestamp):
+        if not WSOCKS:
+            return
+
         length = len(message)
         if length > constant.MAX_MESSAGE_LENGTH:
             logger.warn('Truncating {} byte message'.format(length))

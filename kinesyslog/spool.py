@@ -141,7 +141,7 @@ class EventSpoolWorker(Process):
             self.write_stats(name=constant.STAT_SPOOL_AGE, op='set', labels=labels, value=age)
             self.write_stats(name=constant.STAT_SPOOL_COUNT, op='set', labels=labels, value=batch_files)
             logger.debug('flush check: files={0} age={1}'.format(batch_files, age))
-            if batch_files >= constant.MAX_RECORD_COUNT or age >= constant.FLUSH_TIME:
+            if batch_files >= constant.MAX_BATCH_COUNT or age >= constant.FLUSH_TIME:
                 self.loop.call_soon(self.flush)
 
         self.schedule_flush()
@@ -153,16 +153,18 @@ class EventSpoolWorker(Process):
                 batch_kwargs = {'DeliveryStreamName': self.delivery_stream, 'Records': []}
                 batch_size = 0
                 batch_files = []
+                labels = {'stream': self.delivery_stream}
 
                 while record_files:
                     path = record_files.pop()
                     try:
                         file_size = os.path.getsize(path)
+                        self.write_stats(name=constant.STAT_RECORD_BYTES, op='add', labels=labels, value=file_size)
                     except Exception as e:
                         logger.warn('Failed to get size of file {0} from spool: {1}'.format(path, e))
                         continue
 
-                    if batch_size + file_size <= constant.FLUSH_SIZE and len(batch_files) < constant.MAX_RECORD_COUNT:
+                    if batch_size + file_size <= constant.MAX_BATCH_SIZE and len(batch_files) < constant.MAX_BATCH_COUNT:
                         logger.debug('Including {0} ({1} bytes) in batch'.format(path, file_size))
                         batch_size += file_size
                         batch_files.append(path)
@@ -178,7 +180,6 @@ class EventSpoolWorker(Process):
                         break
 
                 if batch_kwargs['Records']:
-                    labels = {'stream': self.delivery_stream}
                     self.write_stats(name=constant.STAT_BATCH_RECORDS, op='add', labels=labels, value=len(batch_files))
                     self.write_stats(name=constant.STAT_BATCH_BYTES, op='add', labels=labels, value=batch_size)
                     logger.info('Batch has {0} bytes in {1} files'.format(batch_size, len(batch_files)))

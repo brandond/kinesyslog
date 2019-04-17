@@ -6,8 +6,8 @@ from aioprometheus.collectors import Counter, Gauge, Histogram
 from aioprometheus.registry import CollectorRegistry
 from aioprometheus.service import DEFAULT_METRICS_PATH, Service
 
-from .server import BaseServer
 from . import constant
+from .server import BaseServer
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,15 @@ class StatsRegistry(CollectorRegistry):
         self.register(Counter(name=constant.STAT_MESSAGE_BYTES, doc='Message bytes received'))
         self.register(Counter(name=constant.STAT_MESSAGE_COUNT, doc='Message records received'))
         self.register(Counter(name=constant.STAT_BATCH_FAILED, doc='Kinesis batch record failures'))
-        self.register(Histogram(name=constant.STAT_BATCH_RECORDS, doc='Kinesis batch record count'))
-        self.register(Histogram(name=constant.STAT_BATCH_BYTES, doc='Kinesis batch record size'))
         self.register(Gauge(name=constant.STAT_LISTENERS, doc='The number of message listeners'))
         self.register(Gauge(name=constant.STAT_SPOOL_AGE, doc='Kinesis batch spool record age'))
         self.register(Gauge(name=constant.STAT_SPOOL_COUNT, doc='Kinesis batch spool record count'))
+        self.register(Histogram(name=constant.STAT_BATCH_RECORDS, doc='Kinesis batch record count',
+                                buckets=[x for x in range(0, constant.MAX_BATCH_COUNT + 1, constant.MAX_BATCH_COUNT // 10)]))
+        self.register(Histogram(name=constant.STAT_BATCH_BYTES, doc='Kinesis batch request size',
+                                buckets=[x for x in range(0, constant.MAX_BATCH_SIZE + 1, constant.MAX_BATCH_SIZE // 8)]))
+        self.register(Histogram(name=constant.STAT_RECORD_BYTES, doc='Kinesis record size',
+                                buckets=[x for x in range(0, constant.MAX_RECORD_SIZE + 1, constant.MAX_RECORD_SIZE // 8)]))
 
 
 class StatsService(Service):
