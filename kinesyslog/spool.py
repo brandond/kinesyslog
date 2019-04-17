@@ -138,8 +138,8 @@ class EventSpoolWorker(Process):
             batch_files = len(glob(os.path.join(self.spool_dir, constant.SPOOL_PREFIX) + '*'))
 
             labels = {'path': self.spool_dir}
-            self.write_stats(name='kinesyslog_spool_age', op='set', labels=labels, value=age)
-            self.write_stats(name='kinesyslog_spool_count', op='set', labels=labels, value=batch_files)
+            self.write_stats(name=constant.STAT_SPOOL_AGE, op='set', labels=labels, value=age)
+            self.write_stats(name=constant.STAT_SPOOL_COUNT, op='set', labels=labels, value=batch_files)
             logger.debug('flush check: files={0} age={1}'.format(batch_files, age))
             if batch_files >= constant.MAX_RECORD_COUNT or age >= constant.FLUSH_TIME:
                 self.loop.call_soon(self.flush)
@@ -179,8 +179,8 @@ class EventSpoolWorker(Process):
 
                 if batch_kwargs['Records']:
                     labels = {'stream': self.delivery_stream}
-                    self.write_stats(name='kinesyslog_batch_records', op='add', labels=labels, value=len(batch_files))
-                    self.write_stats(name='kinesyslog_batch_bytes', op='add', labels=labels, value=batch_size)
+                    self.write_stats(name=constant.STAT_BATCH_RECORDS, op='add', labels=labels, value=len(batch_files))
+                    self.write_stats(name=constant.STAT_BATCH_BYTES, op='add', labels=labels, value=batch_size)
                     logger.info('Batch has {0} bytes in {1} files'.format(batch_size, len(batch_files)))
                     try:
                         client = self.session.client('firehose', config=self.config)
@@ -199,14 +199,14 @@ class EventSpoolWorker(Process):
                         else:
                             logger.warn('Firehose record failed: [{ErrorCode}] {ErrorMessage}'.format(**status))
                             labels['error_message'] = status['ErrorMessage']
-                            self.write_stats(name='kinesyslog_batch_record_failed', op='add', labels=labels, value=1)
+                            self.write_stats(name=constant.STAT_BATCH_FAILED, op='add', labels=labels, value=1)
                 else:
                     logger.debug('Batch is empty')
                     self.flushed = self.loop.time()
                     return
 
     def write_stats(self, **kwargs):
-        if self.loop.is_running():
+        if not self.loop._stopping:
             task = self.loop.create_task(self._write_stats(**kwargs))
             task.add_done_callback(self._write_done)
 

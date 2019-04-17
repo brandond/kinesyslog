@@ -41,7 +41,7 @@ class BaseLoggingProtocol(object):
         if self._loop.is_running():
             addr = addr or self._transport.get_extra_info('peername')
             labels = {'source': addr[0], 'port': self._sockname[1]}
-            self._registry.get('kinesyslog_message_bytes_total').add(labels=labels, value=len(data))
+            self._registry.get(constant.STAT_MESSAGE_BYTES).add(labels=labels, value=len(data))
             task = self._loop.create_task(self._feed_data(data, addr))
             task.add_done_callback(self._feed_done)
 
@@ -98,7 +98,7 @@ class BaseLoggingProtocol(object):
     async def _write(self, addr, message):
         addr = addr or self._transport.get_extra_info('peername')
         labels = {'source': addr[0], 'port': self._sockname[1]}
-        self._registry.get('kinesyslog_message_count_total').inc(labels=labels)
+        self._registry.get(constant.STAT_MESSAGE_COUNT).inc(labels=labels)
         await self._sink.write(addr[0], self._sockname[1], bytes(message), time.time())
 
     async def _feed_data(self, data, addr=None):

@@ -37,3 +37,12 @@ PROXY20_TLV_TYPES = {0x01: 'PP2_TYPE_ALPN',
                      0x26: 'PP2_TYPE_NETNS',
                      0xEA: 'PP2_TYPE_AWS',
                      }
+STAT_HTTP_REQS = 'kinesyslog_http_requests_total'
+STAT_MESSAGE_BYTES = 'kinesyslog_message_bytes_total'
+STAT_MESSAGE_COUNT = 'kinesyslog_message_count_total'
+STAT_BATCH_FAILED = 'kinesyslog_batch_record_failed'
+STAT_BATCH_RECORDS = 'kinesyslog_batch_records'
+STAT_BATCH_BYTES = 'kinesyslog_batch_bytes'
+STAT_LISTENERS = 'kinesyslog_listener_count'
+STAT_SPOOL_COUNT = 'kinesyslog_spool_count'
+STAT_SPOOL_AGE = 'kinesyslog_spool_age'

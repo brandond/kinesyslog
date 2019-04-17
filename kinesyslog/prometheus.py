@@ -7,6 +7,7 @@ from aioprometheus.registry import CollectorRegistry
 from aioprometheus.service import DEFAULT_METRICS_PATH, Service
 
 from .server import BaseServer
+from . import constant
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +27,15 @@ class StatsRegistry(CollectorRegistry):
     active = True
 
     def register_collectors(self):
-        self.register(Counter(name='kinesyslog_http_requests_total', doc='Total HTTP requests'))
-        self.register(Counter(name='kinesyslog_message_bytes_total', doc='Message bytes received'))
-        self.register(Counter(name='kinesyslog_message_count_total', doc='Message records received'))
-        self.register(Counter(name='kinesyslog_batch_record_failed', doc='Kinesis batch record failures'))
-        self.register(Histogram(name='kinesyslog_batch_records', doc='Kinesis batch record count'))
-        self.register(Histogram(name='kinesyslog_batch_bytes', doc='Kinesis batch record size'))
-        self.register(Gauge(name='kinesyslog_listener_count', doc='The number of message listeners'))
-        self.register(Gauge(name='kinesyslog_spool_age', doc='Kinesis batch spool record age'))
-        self.register(Gauge(name='kinesyslog_spool_count', doc='Kinesis batch spool record count'))
+        self.register(Counter(name=constant.STAT_HTTP_REQS, doc='Total HTTP requests'))
+        self.register(Counter(name=constant.STAT_MESSAGE_BYTES, doc='Message bytes received'))
+        self.register(Counter(name=constant.STAT_MESSAGE_COUNT, doc='Message records received'))
+        self.register(Counter(name=constant.STAT_BATCH_FAILED, doc='Kinesis batch record failures'))
+        self.register(Histogram(name=constant.STAT_BATCH_RECORDS, doc='Kinesis batch record count'))
+        self.register(Histogram(name=constant.STAT_BATCH_BYTES, doc='Kinesis batch record size'))
+        self.register(Gauge(name=constant.STAT_LISTENERS, doc='The number of message listeners'))
+        self.register(Gauge(name=constant.STAT_SPOOL_AGE, doc='Kinesis batch spool record age'))
+        self.register(Gauge(name=constant.STAT_SPOOL_COUNT, doc='Kinesis batch spool record count'))
 
 
 class StatsService(Service):
@@ -65,7 +66,7 @@ class StatsServer(BaseServer):
                 labels = {'method': request.match_info.route.method}
                 if request.match_info.route.resource:
                     labels['path'] = request.match_info.route.resource.canonical
-                self._registry.get('kinesyslog_http_requests_total').inc(labels=labels)
+                self._registry.get(constant.STAT_HTTP_REQS).inc(labels=labels)
             return await handler(request)
 
         self._args['app'] = Application(middlewares=[prometheus_middleware])
