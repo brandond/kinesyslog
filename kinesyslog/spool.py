@@ -199,9 +199,9 @@ class EventSpoolWorker(Process):
                                 logger.warn('Failed to unlink successfully processed file {0} from spool: {1}'.format(batch_files[i], e))
                         else:
                             logger.warn('Firehose record failed: [{ErrorCode}] {ErrorMessage}'.format(**status))
-                            labels['error_message'] = status['ErrorMessage']
-                            self.write_stats(name=constant.STAT_BATCH_FAILED, op='add', labels=labels, value=1)
-                            del labels['error_message']
+                            error_labels = labels.copy()
+                            error_labels['error_message'] = status['ErrorMessage']
+                            self.write_stats(name=constant.STAT_BATCH_FAILED, op='add', labels=error_labels, value=1)
                 else:
                     logger.debug('Batch is empty')
                     self.flushed = self.loop.time()
