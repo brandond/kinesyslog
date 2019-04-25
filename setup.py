@@ -41,7 +41,6 @@ setup(
             'aioprometheus >= 18.7.1',
         ],
         'all': [
-            'libuuid >= 1.0.0',
             'setproctitle >= 1.1.10',
             'aiohttp >= 3.5.4',
             'aioprometheus >= 18.7.1',

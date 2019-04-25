@@ -1,4 +1,5 @@
 import logging
+import random
 import re
 from datetime import datetime, timedelta
 
@@ -13,13 +14,6 @@ syslog_pattern = re.compile(r"""^<(?P<prio>\d{1,3})>
                                   (?P<timestamp>\S{20,38}|...\ ..\ ..:..:..(\ 20\d\d)?|-))\ ?
                                   (?P<hostname>\S+)*\ ?
                                   (?P<content>.*)""", re.VERBOSE | re.IGNORECASE)
-
-try:
-    from libuuid import uuid4
-    logger.debug('Using fast UUID generation from python-libuuid')
-except ImportError:
-    from uuid import uuid4
-    logger.warn('Not using fast UUID generation from python-libuuid - install libuuid and python-libuuid for 8-10x speedup')
 
 
 def parse_rfc3164_timestamp(timestamp):
@@ -60,7 +54,7 @@ def assign_uuid(message, timestamp):
     if isinstance(timestamp, datetime):
         timestamp = (timestamp - epoch).total_seconds()
 
-    return {'id': str(uuid4()),
+    return {'id': ''.join(random.choices('0123456789', k=56)),
             'message': message,
             'timestamp': int(round(timestamp * 1000)),
             }

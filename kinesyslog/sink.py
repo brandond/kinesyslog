@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import math
+import random
 import signal
 import socket
 from collections import defaultdict
@@ -87,6 +88,7 @@ class MessageSinkWorker(Process):
         self.clear()
         self.schedule_flush()
         self.loop.add_reader(self.sock.fileno(), self.read)
+        random.seed()
         logger.debug('Worker starting')
         self.loop.run_forever()
 
