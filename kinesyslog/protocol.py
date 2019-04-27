@@ -100,8 +100,8 @@ class BaseLoggingProtocol(object):
                     message = message[:constant.MAX_MESSAGE_LENGTH]
                 self._buffer = remainder
                 return message
-            elif len(self._buffer) > constant.MAX_MESSAGE_LENGTH:
-                self._close_with_error('Maximum message length exceeded without finding terminating trailer character')
+        if len(self._buffer) > constant.MAX_MESSAGE_LENGTH:
+            self._close_with_error('Maximum message length exceeded without finding terminating trailer character')
 
     async def _write(self, addr, message):
         addr = addr or self._transport.get_extra_info('peername')
