@@ -2,7 +2,7 @@ import gzip
 import logging
 import time
 import zlib
-from asyncio import CancelledError
+from asyncio import CancelledError, Event
 from asyncio.sslproto import SSLProtocol
 
 from . import constant
@@ -26,28 +26,34 @@ class BaseLoggingProtocol(object):
         self._length = 0
         self._discard = 0
         self._buffer = bytearray()
+        self._buffer_ready = Event()
         self._transport = None
         self._sockname = [b'0.0.0.0', 0]
-        self._paused = False
+        self._peername = [b'0.0.0.0', 0]
+        self._pause_reading = False
+        self._reader_task = None
 
     def connection_made(self, transport):
         self._sockname = transport.get_extra_info('sockname')
-        if hasattr(transport, 'sendto'):
-            return
-        else:
-            self._transport = transport
+        self._reader_task = self._loop.create_task(self._buffer_reader())
+        self._reader_task.add_done_callback(self._buffer_reader_done)
 
-    def data_received(self, data, addr=None):
-        if self._loop.is_running():
-            addr = addr or self._transport.get_extra_info('peername')
-            labels = {'source': addr[0], 'port': self._sockname[1]}
-            self._registry.get(constant.STAT_MESSAGE_BYTES).add(labels=labels, value=len(data))
-            task = self._loop.create_task(self._feed_data(data, addr))
-            task.add_done_callback(self._feed_done)
+        if not hasattr(transport, 'sendto'):
+            self._transport = transport
+            self._peername = transport.get_extra_info('peername')
+
+    def data_received(self, data):
+        self._inc_counter(constant.STAT_MESSAGE_BYTES, len(data))
+        self._buffer.extend(data)
+        self._buffer_ready.set()
 
     def datagram_received(self, data, addr):
-        # Append terminator to simplify parsing
-        self.data_received(data + b'\x00', addr)
+        if self._buffer:
+            logger.warn('Clearing unprocessed datagram buffer of length {0}'.format(len(self._buffer)))
+            self._buffer.clear()
+
+        self._peername = addr
+        self.data_received(data + b'\x00')
 
     def eof_received(self):
         pass
@@ -56,21 +62,13 @@ class BaseLoggingProtocol(object):
         self._close_with_error('Protocol error on {0}'.format(self._sockname[1]), exc)
 
     def connection_lost(self, exc):
-        self.data_received(b'')
+        self._reader_task.cancel()
 
     def pause_writing(self):
         pass
 
     def resume_writing(self):
         pass
-
-    def _feed_done(self, task):
-        try:
-            task.result()
-        except CancelledError:
-            pass
-        except Exception as e:
-            self._close_with_error('Error processing buffer on {0}'.format(self._sockname[1]), e)
 
     def _close_with_error(self, message=None, exception=None):
         if message:
@@ -95,29 +93,44 @@ class BaseLoggingProtocol(object):
         if len(self._buffer) > constant.MAX_MESSAGE_LENGTH:
             self._close_with_error('Maximum message length exceeded without finding terminating trailer character')
 
-    async def _write(self, addr, message):
-        addr = addr or self._transport.get_extra_info('peername')
-        labels = {'source': addr[0], 'port': self._sockname[1]}
-        self._registry.get(constant.STAT_MESSAGE_COUNT).inc(labels=labels)
-        await self._sink.write(addr[0], self._sockname[1], bytes(message), time.time())
+    async def _write(self, message):
+        self._inc_counter(constant.STAT_MESSAGE_COUNT, 1)
+        await self._sink.write(self._peername[0], self._sockname[1], bytes(message), time.time())
 
-    async def _feed_data(self, data, addr=None):
-        self._buffer.extend(data)
+    async def _buffer_reader(self):
+        while True:
+            await self._buffer_ready.wait()
 
-        if len(self._buffer) >= constant.MAX_MESSAGE_BUFFER and self._transport:
-            self._paused = True
-            self._transport.pause_reading()
+            if len(self._buffer) >= constant.MAX_MESSAGE_BUFFER and self._transport:
+                logger.debug("Pausing")
+                self._pause_reading = True
+                self._transport.pause_reading()
 
-        await self._process_data(addr)
+            await self._process_data()
 
-        if self._paused and self._transport:
-            if len(self._buffer) < constant.MAX_MESSAGE_BUFFER:
-                self._paused = False
-                self._transport.resume_reading()
-            else:
-                self._close_with_error('Maximum buffer length exceeded without finding valid message')
+            if self._pause_reading and self._transport:
+                if len(self._buffer) < constant.MAX_MESSAGE_BUFFER:
+                    logger.debug("Unpausing")
+                    self._pause_reading = False
+                    self._transport.resume_reading()
+                else:
+                    self._close_with_error('Maximum buffer length exceeded without finding valid message')
 
-    async def _process_data(self, addr=None):
+            self._buffer_ready.clear()
+
+    def _buffer_reader_done(self, task):
+        try:
+            task.result()
+        except CancelledError:
+            pass
+        except Exception as e:
+            self._close_with_error('Error processing buffer on {0}'.format(self._sockname[1]), e)
+
+    def _inc_counter(self, counter, value):
+        labels = {'source': self._peername[0], 'port': self._sockname[1]}
+        self._registry.get(counter).add(labels=labels, value=value)
+
+    async def _process_data(self):
         raise NotImplementedError
 
 
@@ -133,7 +146,7 @@ class BaseSecureLoggingProtocol(SSLProtocol):
 
 
 class SyslogProtocol(BaseLoggingProtocol):
-    async def _process_data(self, addr=None):
+    async def _process_data(self):
         while self._buffer:
             message = None
 
@@ -149,9 +162,9 @@ class SyslogProtocol(BaseLoggingProtocol):
                 message = self._get_non_transparent_framed_message()
 
             if message:
-                await self._write(addr, message)
+                await self._write(message)
             else:
-                return
+                break
 
     def _discard_excess_bytes(self):
         """
@@ -176,7 +189,7 @@ class SyslogProtocol(BaseLoggingProtocol):
                     self._length = int(length)
                     self._buffer = remainder
                 except ValueError:
-                    # Handle as random chunk of log noncompliant message that happens to start with a digit
+                    # Handle as random chunk of noncompliant message that happens to start with a digit
                     return self._get_non_transparent_framed_message()
             else:
                 return
@@ -195,7 +208,7 @@ class SyslogProtocol(BaseLoggingProtocol):
 
 
 class GelfProtocol(BaseLoggingProtocol):
-    async def _process_data(self, addr=None):
+    async def _process_data(self):
         while self._buffer:
             message = None
 
@@ -211,10 +224,11 @@ class GelfProtocol(BaseLoggingProtocol):
                 self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self._buffer))
 
             if message:
-                await self._write(addr, message)
+                await self._write(message)
             else:
-                return
+                break
 
+    # FIXME: this is all incredibly broken if there's actually more than one packet in the buffer
     def _get_zlib_message(self):
         try:
             return zlib.decompress(self._buffer)
@@ -255,7 +269,7 @@ class DatagramGelfProtocol(GelfProtocol):
             data = self._process_chunk(data)
             if not data:
                 return
-        super(DatagramGelfProtocol, self).data_received(data, addr)
+        super(DatagramGelfProtocol, self).data_received(data)
 
     # TODO - enforce 5 second chunk reassembly window
     def _process_chunk(self, data):

@@ -1,10 +1,12 @@
 import logging
 import ssl
+import socket
 from asyncio.base_events import Server
 
 from .protocol import (DatagramGelfProtocol, DatagramSyslogProtocol,
                        DefaultProtocol, GelfProtocol, SecureGelfProtocol,
                        SecureSyslogProtocol, SyslogProtocol)
+from . import constant
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,7 @@ class BaseServer(object):
         return lambda: self.PROTOCOL(sink=sink, loop=loop, registry=self._registry, **self._args)
 
     async def start(self, sink, loop):
+        logger.debug('Starting server: {0}'.format(self.__class__.__name__))
         self._server = await loop.create_server(
             protocol_factory=self._protocol_factory(sink, loop),
             host=self._host,
@@ -33,6 +36,7 @@ class BaseServer(object):
         return self._server
 
     async def stop(self):
+        logger.debug('Stopping server: {0}'.format(self.__class__.__name__))
         server = self._server
         if server is None:
             return
@@ -57,8 +61,16 @@ class DatagramServer(BaseServer):
             local_addr=(self._host, self._port),
             reuse_address=True,
             reuse_port=True)
+        transport._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, constant.MAX_MESSAGE_BUFFER)
+        transport._sock.setblocking(False)
+        self._transport = transport
         self._server = Server(loop, [transport._sock])
         return self._server
+
+    async def stop(self):
+        await super(DatagramServer, self).stop()
+        if self._transport:
+            self._transport.close()
 
 
 class SyslogServer(BaseServer):

@@ -20,7 +20,7 @@ WSOCKS = list()
 
 
 class MessageSink(object):
-    def __init__(self, spool, server, message_class, group_prefix):
+    def __init__(self, spool, server, message_class, group_prefix, account):
         (rsock, wsock) = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         rsock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, constant.MAX_MESSAGE_BUFFER)
         wsock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, constant.MAX_MESSAGE_BUFFER)
@@ -33,7 +33,7 @@ class MessageSink(object):
         self.lock = asyncio.Lock()
         self.loop = asyncio.get_event_loop()
         self.sock = wsock
-        self.worker = MessageSinkWorker(spool, server, message_class, group_prefix, rsock, daemon=True)
+        self.worker = MessageSinkWorker(spool, server, message_class, group_prefix, account, rsock, daemon=True)
 
     async def write(self, source, dest, message, timestamp):
         if not WSOCKS:
@@ -63,21 +63,15 @@ class MessageSink(object):
 
 
 class MessageSinkWorker(Process):
-    def __init__(self, spool, server, message_class, group_prefix, sock, *args, **kwargs):
+    def __init__(self, spool, server, message_class, group_prefix, account, sock, *args, **kwargs):
         super(MessageSinkWorker, self).__init__(*args, **kwargs)
         self.spool = spool
         self.server = server
         self.message_class = message_class
         self.group_prefix = group_prefix
+        self.account = account
         self.sock = sock
         self.events = defaultdict(list)
-        self.account = '000000000000'
-
-        try:
-            client = spool.session.client('sts', config=spool.config)
-            self.account = client.get_caller_identity()['Account']
-        except Exception:
-            logger.warn('Unable to determine AWS Account ID; using default value.', exc_info=True)
 
     def run(self):
         util.setproctitle('{0} ({1}:{2})'.format(__name__,  self.server.PROTOCOL.__name__, self.server._port))

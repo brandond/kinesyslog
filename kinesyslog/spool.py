@@ -21,7 +21,20 @@ RSOCKS = list()
 WSOCKS = list()
 
 
-class EventSpool(object):
+class EventSpoolWriter(object):
+    def __init__(self, spool_dir):
+        self.spool_dir = spool_dir
+
+    def write(self, record):
+        prefix = constant.TEMP_PREFIX + constant.SPOOL_PREFIX
+        with NamedTemporaryFile(prefix=prefix, dir=self.spool_dir) as temp:
+            logger.debug('Writing {0} byte record to {1}'.format(len(record), temp.name))
+            temp.write(record)
+            temp.flush()
+            os.link(temp.name, temp.name.replace(constant.TEMP_PREFIX, ''))
+
+
+class EventSpoolReader(object):
     def __init__(self, delivery_stream, spool_dir, registry, region_name=None, profile_name=None):
         self.session = Session(profile_name=profile_name)
         self.config = Config(retries={'max_attempts': 10}, region_name=util.get_region(region_name, profile_name))
@@ -59,6 +72,9 @@ class EventSpool(object):
         util.close_all_socks(RSOCKS)
         logger.debug('Worker shutdown complete')
 
+    def get_account(self):
+        return self.session.client('sts', config=self.config).get_caller_identity()['Account']
+
     def read(self):
         try:
             buff = self.sock.recv(constant.MAX_MESSAGE_BUFFER)
@@ -74,14 +90,6 @@ class EventSpool(object):
             pass
         except UnpackValueError:
             logger.warn('Failed to unpack message', exc_info=True)
-
-    def write(self, record):
-        prefix = constant.TEMP_PREFIX + constant.SPOOL_PREFIX
-        with NamedTemporaryFile(prefix=prefix, dir=self.spool_dir) as temp:
-            logger.debug('Writing {0} byte record to {1}'.format(len(record), temp.name))
-            temp.write(record)
-            temp.flush()
-            os.link(temp.name, temp.name.replace(constant.TEMP_PREFIX, ''))
 
     @classmethod
     def _validate_stream(cls, session, config, delivery_stream):

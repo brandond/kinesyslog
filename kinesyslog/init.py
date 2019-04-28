@@ -165,7 +165,7 @@ def listen(**kwargs):
     from .server import (DatagramGelfServer, DatagramSyslogServer, GelfServer,
                          SecureGelfServer, SecureSyslogServer, SyslogServer)
     from .sink import MessageSink
-    from .spool import EventSpool
+    from .spool import EventSpoolReader, EventSpoolWriter
     from .util import create_registry
 
     try:
@@ -214,47 +214,53 @@ def listen(**kwargs):
         sys.exit(posix.EX_CONFIG)
 
     try:
-        with EventSpool(delivery_stream=kwargs['stream'],
-                        spool_dir=kwargs['spool_dir'],
-                        registry=registry,
-                        region_name=kwargs['region'],
-                        profile_name=kwargs['profile']) as spool:
-            with ExitStack() as stack:
-                sinks = []
+        with ExitStack() as stack:
+            spool_writer = EventSpoolWriter(spool_dir=kwargs['spool_dir'])
+            spool_reader = EventSpoolReader(delivery_stream=kwargs['stream'],
+                                            spool_dir=kwargs['spool_dir'],
+                                            registry=registry,
+                                            region_name=kwargs['region'],
+                                            profile_name=kwargs['profile'])
+            account = spool_reader.get_account()
+            stack.enter_context(spool_reader)
+            sinks = []
+
+            for server in servers:
+                sink = MessageSink if issubclass(server.PROTOCOL, BaseLoggingProtocol) else StatsSink
+                sink = sink(spool=spool_writer,
+                            server=server,
+                            message_class=message_class,
+                            group_prefix=kwargs['group_prefix'],
+                            account=account)
+                context = stack.enter_context(sink)
+                sinks.append(context)
+
+            for i, server in enumerate(servers):
+                try:
+                    loop.run_until_complete(server.start(sink=sinks[i], loop=loop))
+                    util.setproctitle('{0} (master:{1})'.format(__name__, i+1))
+                except Exception as e:
+                    logger.error('Failed to start {}: {}'.format(server.__class__.__name__, e), exc_info=True)
+                    servers.remove(server)
+
+            if servers:
+                # Everything started successfully, set up signal handlers and wait until termination
+                try:
+                    logger.info('Successfully started {} servers'.format(len(servers)))
+                    signal.signal(signal.SIGTERM, util.interrupt)
+                    signal.signal(signal.SIGCHLD, util.interrupt)
+                    loop.run_forever()
+                except (KeyboardInterrupt, ChildProcessError, SystemExit) as e:
+                    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+                    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+                    logger.info('Shutting down servers: {0}'.format(e.__class__.__name__))
+
+                # Time passes...
+
                 for server in servers:
-                    sink = MessageSink if issubclass(server.PROTOCOL, BaseLoggingProtocol) else StatsSink
-                    sink = sink(spool=spool,
-                                server=server,
-                                message_class=message_class,
-                                group_prefix=kwargs['group_prefix'])
-                    context = stack.enter_context(sink)
-                    sinks.append(context)
-
-                for i, server in enumerate(servers):
-                    try:
-                        loop.run_until_complete(server.start(sink=sinks[i], loop=loop))
-                    except Exception as e:
-                        logger.error('Failed to start {}: {}'.format(server.__class__.__name__, e))
-                        servers.remove(server)
-
-                if servers:
-                    try:
-                        util.setproctitle('{0} (master:{1})'.format(__name__, len(servers)))
-                        logger.info('Successfully started {} servers'.format(len(servers)))
-                        signal.signal(signal.SIGTERM, util.interrupt)
-                        signal.signal(signal.SIGCHLD, util.interrupt)
-                        loop.run_forever()
-                    except (KeyboardInterrupt, ChildProcessError, SystemExit) as e:
-                        signal.signal(signal.SIGTERM, signal.SIG_DFL)
-                        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-                        logger.info('Shutting down servers: {0}'.format(e.__class__.__name__))
-
-                    # Time passes...
-
-                    for server in servers:
-                        loop.run_until_complete(server.stop())
-                else:
-                    raise Exception('All servers failed')
+                    loop.run_until_complete(server.stop())
+            else:
+                raise Exception('All servers failed')
     except Exception as e:
         logger.error('Unhandled exception: {0}'.format(e))
         if isinstance(e, PermissionError):
