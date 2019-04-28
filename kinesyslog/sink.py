@@ -35,18 +35,18 @@ class MessageSink(object):
         self.sock = wsock
         self.worker = MessageSinkWorker(spool, server, message_class, group_prefix, account, rsock, daemon=True)
 
-    async def write(self, source, dest, message, timestamp):
+    async def write(self, source, dest, messages, timestamp):
         if not WSOCKS:
             return
 
-        length = len(message)
-        if length > constant.MAX_MESSAGE_LENGTH:
-            logger.warn('Truncating {} byte message'.format(length))
-            message = message[:constant.MAX_MESSAGE_LENGTH]
-            length = constant.MAX_MESSAGE_LENGTH
-
         async with self.lock:
-            await self.loop.sock_sendall(self.sock, self.packer.pack([source, dest, message, timestamp]))
+            for message in messages:
+                length = len(message)
+                if length > constant.MAX_MESSAGE_LENGTH:
+                    logger.warn('Truncating {} byte message'.format(length))
+                    message = message[:constant.MAX_MESSAGE_LENGTH]
+                    length = constant.MAX_MESSAGE_LENGTH
+                await self.loop.sock_sendall(self.sock, self.packer.pack([source, dest, message, timestamp]))
 
     def __enter__(self):
         self.worker.start()

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class StatsSink(object):
-    def __init__(self, spool, server, message_class, group_prefix):
+    def __init__(self, spool, server, message_class, group_prefix, account):
         pass
 
     def __enter__(self):

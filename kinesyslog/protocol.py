@@ -93,9 +93,9 @@ class BaseLoggingProtocol(object):
         if len(self._buffer) > constant.MAX_MESSAGE_LENGTH:
             self._close_with_error('Maximum message length exceeded without finding terminating trailer character')
 
-    async def _write(self, message):
-        self._inc_counter(constant.STAT_MESSAGE_COUNT, 1)
-        await self._sink.write(self._peername[0], self._sockname[1], bytes(message), time.time())
+    async def _write(self, messages):
+        self._inc_counter(constant.STAT_MESSAGE_COUNT, len(messages))
+        await self._sink.write(self._peername[0], self._sockname[1], messages, time.time())
 
     async def _buffer_reader(self):
         while True:
@@ -127,8 +127,9 @@ class BaseLoggingProtocol(object):
             self._close_with_error('Error processing buffer on {0}'.format(self._sockname[1]), e)
 
     def _inc_counter(self, counter, value):
-        labels = {'source': self._peername[0], 'port': self._sockname[1]}
-        self._registry.get(counter).add(labels=labels, value=value)
+        if self._registry.active:
+            labels = {'source': self._peername[0], 'port': self._sockname[1]}
+            self._registry.get(counter).add(labels=labels, value=value)
 
     async def _process_data(self):
         raise NotImplementedError
@@ -147,6 +148,7 @@ class BaseSecureLoggingProtocol(SSLProtocol):
 
 class SyslogProtocol(BaseLoggingProtocol):
     async def _process_data(self):
+        messages = []
         while self._buffer:
             message = None
 
@@ -162,9 +164,16 @@ class SyslogProtocol(BaseLoggingProtocol):
                 message = self._get_non_transparent_framed_message()
 
             if message:
-                await self._write(message)
+                messages.append(bytes(message))
             else:
                 break
+
+            if messages and len(messages) % constant.PROCESS_FLUSH_SIZE == 0:
+                await self._write(messages)
+                messages.clear()
+
+        if messages:
+            await self._write(messages)
 
     def _discard_excess_bytes(self):
         """
@@ -209,6 +218,7 @@ class SyslogProtocol(BaseLoggingProtocol):
 
 class GelfProtocol(BaseLoggingProtocol):
     async def _process_data(self):
+        messages = []
         while self._buffer:
             message = None
 
@@ -224,9 +234,16 @@ class GelfProtocol(BaseLoggingProtocol):
                 self._close_with_error('{0} unable to determine framing for message: {1}'.format(self.__class__.__name__, self._buffer))
 
             if message:
-                await self._write(message)
+                messages.append(bytes(message))
             else:
                 break
+
+            if messages and len(messages) % constant.PROCESS_FLUSH_SIZE == 0:
+                await self._write(messages)
+                messages.clear()
+
+        if messages:
+            await self._write(messages)
 
     # FIXME: this is all incredibly broken if there's actually more than one packet in the buffer
     def _get_zlib_message(self):
