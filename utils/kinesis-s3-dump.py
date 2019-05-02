@@ -9,7 +9,11 @@ import zlib
 
 import boto3
 import click
-import ujson as json
+
+try:
+    import ujson as json
+except ImportError:
+    import json
 
 try:
     import urlparse
@@ -21,7 +25,7 @@ except ImportError:
 logger = logging.getLogger(sys.argv[0])
 
 
-@click.command()
+@click.command(context_settings={'max_content_width': 160})
 @click.option('--profile', help='Use a specific profile from your credential file.', default=None)
 @click.option('--region', help='Region to act upon.', default=None)
 @click.option('--s3-uri', help='S3 bucket URI', required=True)

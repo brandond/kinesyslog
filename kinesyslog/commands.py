@@ -12,7 +12,7 @@ def _print_version(ctx, param, value):
     ctx.exit()
 
 
-@click.group()
+@click.group(context_settings={'max_content_width': 160})
 @click.option(
     '--version',
     is_flag=True,
