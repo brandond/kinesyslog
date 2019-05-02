@@ -1,5 +1,6 @@
 boto3 >= 1.9.86
 botocore >= 1.12.86
 click
+ctypes
 ujson < 2.0.0
 msgpack
